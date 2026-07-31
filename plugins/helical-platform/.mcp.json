@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "helical": {
+      "command": "python3",
+      "args": ["./mcp/server.py"],
+      "cwd": ".",
+      "env_vars": ["HELICAL_API_BASE_URL", "HELICAL_API_TOKEN"]
+    }
+  }
+}

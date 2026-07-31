@@ -1,0 +1,13 @@
+interface:
+  display_name: "Compute Embeddings"
+  short_description: "Embed a dataset with a Helical foundation model"
+  default_prompt: "Use $compute-embeddings to embed my dataset with a Helical model."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "helical"
+      description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,13 @@
+interface:
+  display_name: "Fine-tune a Model"
+  short_description: "Train a Helical model on your labelled data"
+  default_prompt: "Use $fine-tune-model to fine-tune a Helical model on my labelled dataset."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "helical"
+      description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
+
+policy:
+  allow_implicit_invocation: true

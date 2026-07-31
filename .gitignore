@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environments — .env in particular will hold a Cognito bearer token locally
+.venv/
+venv/
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# Local agent settings
+.claude/
+
+# Reference test prompts. Not tracked: the tables are replicated verbatim in
+# DESIGN.md §12.2, which is what reviewers read, and a binary diffs opaquely.
+helical_test_prompts.xlsx
