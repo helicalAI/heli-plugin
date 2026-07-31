@@ -4,6 +4,7 @@ Status: production design target with a minimal local reference scaffold
 Plugin: `helical-platform`
 Version: `0.1.0`
 Last reviewed: 2026-07-30 (amended to resolve design-review comments)
+Repository: [helicalAI/heli-plugin](https://github.com/helicalAI/heli-plugin)
 Tracking: GitHub epic [helicalAI/dashboard#1756](https://github.com/helicalAI/dashboard/issues/1756) · plan in [`PLAN.md`](PLAN.md)
 
 ## 1. Purpose
