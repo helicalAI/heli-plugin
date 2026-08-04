@@ -1,0 +1,248 @@
+"""Manifest, skill, and documentation consistency.
+
+test_server.py covers the tool contract. This file covers everything around it —
+the things that drift silently because nothing executes them:
+
+  * publication metadata (a placeholder URL ships happily)
+  * the skill <-> MCP-server wiring (a skill can name a server that does not exist)
+  * the local skill's no-tools invariant (see run-helical-locally, DESIGN 7.2)
+  * tool names quoted in the skills (a rename leaves the prose stale)
+  * tool counts quoted in the docs
+
+Standard library only, matching mcp/server.py — this repo has no dependencies and
+no build step, so the suite must run on a bare interpreter.
+"""
+
+import importlib.util
+import json
+import re
+import unittest
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+PLUGIN = Path(__file__).parents[1]
+REPO = PLUGIN.parents[1]
+MANIFEST_PATH = PLUGIN / ".codex-plugin" / "plugin.json"
+MCP_JSON_PATH = PLUGIN / ".mcp.json"
+SKILLS_DIR = PLUGIN / "skills"
+
+MANIFEST_TEXT = MANIFEST_PATH.read_text()
+MANIFEST = json.loads(MANIFEST_TEXT)
+MCP_JSON = json.loads(MCP_JSON_PATH.read_text())
+SKILL_DIRS = sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir())
+
+# The skills that drive the hosted API, and the one that must not.
+HOSTED_SKILLS = {"compute-embeddings", "fine-tune-model"}
+LOCAL_SKILL = "run-helical-locally"
+
+# Hosts Helical controls. A URL outside this set in shipped metadata is either a
+# leftover placeholder or a typo'd domain someone else could register.
+ALLOWED_HOSTS = {
+    "helical.bio",
+    "www.helical.bio",
+    "helical-ai.com",
+    "www.helical-ai.com",
+    "docs.helical-ai.bio",
+    "helical.readthedocs.io",
+    "github.com",  # path-restricted below
+}
+
+SPELLED = {
+    12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen",
+    17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
+}
+
+_spec = importlib.util.spec_from_file_location(
+    "helical_plugin_mcp_manifest_tests", PLUGIN / "mcp" / "server.py"
+)
+server = importlib.util.module_from_spec(_spec)
+assert _spec.loader
+_spec.loader.exec_module(server)
+TOOL_NAMES = {tool["name"] for tool in server.TOOLS}
+
+
+def frontmatter(skill_md: Path) -> str:
+    """The YAML block between the opening and closing --- of a SKILL.md."""
+    text = skill_md.read_text()
+    match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
+    assert match, f"{skill_md} has no frontmatter block"
+    return match.group(1)
+
+
+def agent_config(skill_dir: Path) -> str:
+    return (skill_dir / "agents" / "openai.yaml").read_text()
+
+
+def declared_mcp_servers(yaml_text: str) -> list[str]:
+    """MCP server names from `- type: "mcp"` / `value: "<name>"` tool entries.
+
+    A deliberately narrow reader rather than a YAML parse: PyYAML is not
+    available (no dependencies), and the only shape that matters is the one the
+    agent configs actually use.
+    """
+    servers = []
+    for block in re.split(r"\n\s*-\s+", yaml_text):
+        if re.search(r'type:\s*"?mcp"?', block):
+            value = re.search(r'value:\s*"([^"]+)"', block)
+            if value:
+                servers.append(value.group(1))
+    return servers
+
+
+def tool_calls(text: str) -> set[str]:
+    """Names written as a call — `some_tool({ ... })` — anywhere in the text."""
+    return set(re.findall(r"\b([a-z][a-z0-9_]{2,})\(\s*\{", text))
+
+
+def tool_like_tokens(text: str) -> set[str]:
+    """Tokens shaped like one of our tool names.
+
+    Matches on the verb prefixes the tool surface actually uses, which keeps
+    parameter names (`batch_size`, `model_version`, `s3_key`) out of the result —
+    they would otherwise look like stale tool references.
+    """
+    return set(re.findall(r"\b((?:list|get|read|start|estimate)_[a-z0-9_]+)\b", text))
+
+
+def tool_mentions(text: str) -> set[str]:
+    """Tools referred to anywhere in the text, in any form."""
+    return {name for name in TOOL_NAMES if re.search(rf"\b{name}\b", text)}
+
+
+class ManifestMetadataTests(unittest.TestCase):
+    def test_no_placeholder_metadata_survives(self):
+        for placeholder in ("example.com", "Example, Inc.", "example/"):
+            self.assertNotIn(placeholder, MANIFEST_TEXT)
+
+    def test_every_url_is_on_a_helical_controlled_host(self):
+        for url in re.findall(r'"(https?://[^"]+)"', MANIFEST_TEXT):
+            host = urlparse(url).netloc
+            with self.subTest(url=url):
+                self.assertIn(host, ALLOWED_HOSTS)
+                if host == "github.com":
+                    self.assertTrue(
+                        urlparse(url).path.startswith("/helicalAI/"),
+                        f"{url} is not under the helicalAI org",
+                    )
+
+    def test_license_claim_matches_what_the_repo_ships(self):
+        """Claiming a licence with no LICENSE file is unenforceable, and shipping
+        one without declaring it hides it. Either both or neither."""
+        has_file = any((REPO / name).exists() for name in ("LICENSE", "LICENSE.md", "LICENSE.txt"))
+        declared = "license" in MANIFEST
+        self.assertEqual(
+            has_file,
+            declared,
+            "add a LICENSE file, or drop the manifest's license claim — "
+            f"file present: {has_file}, manifest declares: {declared}",
+        )
+
+    def test_pointers_resolve(self):
+        self.assertTrue((PLUGIN / MANIFEST["skills"]).is_dir())
+        self.assertTrue((PLUGIN / MANIFEST["mcpServers"]).is_file())
+
+    def test_one_default_prompt_per_skill(self):
+        """Adding a skill without an entry here leaves it undiscoverable."""
+        self.assertEqual(len(MANIFEST["interface"]["defaultPrompt"]), len(SKILL_DIRS))
+
+
+class SkillStructureTests(unittest.TestCase):
+    def test_there_are_skills_to_check(self):
+        self.assertEqual({p.name for p in SKILL_DIRS}, HOSTED_SKILLS | {LOCAL_SKILL})
+
+    def test_frontmatter_name_matches_the_directory(self):
+        for skill_dir in SKILL_DIRS:
+            with self.subTest(skill=skill_dir.name):
+                declared = re.search(r"^name:\s*(\S+)", frontmatter(skill_dir / "SKILL.md"), re.M)
+                self.assertIsNotNone(declared)
+                self.assertEqual(declared.group(1), skill_dir.name)
+
+    def test_every_skill_describes_itself(self):
+        for skill_dir in SKILL_DIRS:
+            with self.subTest(skill=skill_dir.name):
+                self.assertRegex(
+                    frontmatter(skill_dir / "SKILL.md"), re.compile(r"^description:", re.M)
+                )
+
+    def test_every_skill_has_an_agent_config_naming_itself(self):
+        for skill_dir in SKILL_DIRS:
+            with self.subTest(skill=skill_dir.name):
+                config = agent_config(skill_dir)
+                self.assertIn(f"${skill_dir.name}", config)
+
+
+class ToolWiringTests(unittest.TestCase):
+    """The wiring that has no runtime check anywhere."""
+
+    def test_declared_mcp_servers_exist_in_mcp_json(self):
+        available = set(MCP_JSON["mcpServers"])
+        for skill_dir in SKILL_DIRS:
+            for name in declared_mcp_servers(agent_config(skill_dir)):
+                with self.subTest(skill=skill_dir.name, server=name):
+                    self.assertIn(name, available)
+
+    def test_hosted_skills_declare_the_helical_server(self):
+        for name in sorted(HOSTED_SKILLS):
+            with self.subTest(skill=name):
+                self.assertEqual(declared_mcp_servers(agent_config(SKILLS_DIR / name)), ["helical"])
+
+    def test_the_local_skill_declares_no_tools_at_all(self):
+        """DESIGN 7.2: our server runs on our infrastructure and cannot execute
+        anything on the user's machine. Local mode works only because the agent
+        host already has a shell. Declaring an MCP dependency here would promise
+        a capability that does not exist."""
+        config = agent_config(SKILLS_DIR / LOCAL_SKILL)
+        self.assertEqual(declared_mcp_servers(config), [])
+        self.assertNotIn("dependencies:", config)
+
+    def test_the_local_skill_calls_no_hosted_tool(self):
+        calls = tool_calls((SKILLS_DIR / LOCAL_SKILL / "SKILL.md").read_text())
+        self.assertEqual(calls & TOOL_NAMES, set())
+
+    def test_tool_names_quoted_in_the_skills_all_exist(self):
+        """A renamed tool otherwise leaves instructions that cannot be followed."""
+        for skill_dir in SKILL_DIRS:
+            if skill_dir.name == LOCAL_SKILL:
+                continue  # calls the helical package, not our tools
+            for call in sorted(tool_like_tokens((skill_dir / "SKILL.md").read_text())):
+                with self.subTest(skill=skill_dir.name, tool=call):
+                    self.assertIn(call, TOOL_NAMES)
+
+    def test_the_hosted_skills_between_them_document_every_tool(self):
+        documented = set()
+        for name in HOSTED_SKILLS:
+            documented |= tool_mentions((SKILLS_DIR / name / "SKILL.md").read_text())
+        self.assertEqual(
+            TOOL_NAMES - documented,
+            set(),
+            "these tools are exposed but no skill tells the agent when to use them",
+        )
+
+
+class DocumentationDriftTests(unittest.TestCase):
+    """Counts written in prose, checked against the code that defines them."""
+
+    def _assert_count_claims(self, path: Path):
+        text = path.read_text()
+        expected = len(server.TOOLS)
+        for claim in re.findall(r"\b(\w+)\s+tools\b", text):
+            normalised = claim.lower()
+            if normalised in SPELLED.values() or normalised.isdigit():
+                actual = int(normalised) if normalised.isdigit() else None
+                with self.subTest(file=path.name, claim=claim):
+                    self.assertEqual(
+                        actual if actual is not None else normalised,
+                        expected if actual is not None else SPELLED[expected],
+                        f"{path.name} says '{claim} tools'; the server defines {expected}",
+                    )
+
+    def test_readme_tool_count(self):
+        self._assert_count_claims(REPO / "README.md")
+
+    def test_plan_tool_count(self):
+        self._assert_count_claims(REPO / "PLAN.md")
+
+
+if __name__ == "__main__":
+    unittest.main()
