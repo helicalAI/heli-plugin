@@ -90,7 +90,7 @@ def declared_mcp_servers(yaml_text: str) -> list[str]:
     servers = []
     for block in re.split(r"\n\s*-\s+", yaml_text):
         if re.search(r'type:\s*"?mcp"?', block):
-            value = re.search(r'value:\s*"([^"]+)"', block)
+            value = re.search(r'value:\s*"?([^"\n]+?)"?\s*$', block, re.M)
             if value:
                 servers.append(value.group(1))
     return servers
@@ -118,12 +118,17 @@ def tool_mentions(text: str) -> set[str]:
 
 class ManifestMetadataTests(unittest.TestCase):
     def test_no_placeholder_metadata_survives(self):
-        for placeholder in ("example.com", "Example, Inc.", "example/"):
+        for placeholder in ("example.com", "Example, Inc."):
             self.assertNotIn(placeholder, MANIFEST_TEXT)
 
     def test_every_url_is_on_a_helical_controlled_host(self):
-        for url in re.findall(r'"(https?://[^"]+)"', MANIFEST_TEXT):
-            host = urlparse(url).netloc
+        """Scans the whole manifest, not just whole quoted values: a docs or
+        marketing link inside `longDescription` or `defaultPrompt` is exactly
+        where a typo'd domain someone else could register would hide."""
+        urls = re.findall(r"https?://[^\s\"'<>)\\]+", MANIFEST_TEXT)
+        self.assertGreater(len(urls), 0, "no URLs found — the scan is broken, not the manifest")
+        for url in urls:
+            host = urlparse(url).netloc.lower()
             with self.subTest(url=url):
                 self.assertIn(host, ALLOWED_HOSTS)
                 if host == "github.com":
@@ -132,25 +137,49 @@ class ManifestMetadataTests(unittest.TestCase):
                         f"{url} is not under the helicalAI org",
                     )
 
-    def test_license_claim_matches_what_the_repo_ships(self):
+    def test_license_claim_agrees_with_what_the_repo_ships(self):
         """Claiming a licence with no LICENSE file is unenforceable, and shipping
-        one without declaring it hides it. Either both or neither."""
-        has_file = any((REPO / name).exists() for name in ("LICENSE", "LICENSE.md", "LICENSE.txt"))
-        declared = "license" in MANIFEST
+        one without declaring it hides it. Either both or neither — and when both,
+        they must name the same licence, or the manifest misreports the terms.
+        """
+        found = [
+            path
+            for root in (REPO, PLUGIN)
+            for name in ("LICENSE", "LICENSE.md", "LICENSE.txt")
+            if (path := root / name).exists()
+        ]
+        declared = MANIFEST.get("license")
+        self.assertNotEqual(declared, "", "an empty license string declares nothing")
         self.assertEqual(
-            has_file,
-            declared,
+            bool(found),
+            declared is not None,
             "add a LICENSE file, or drop the manifest's license claim — "
-            f"file present: {has_file}, manifest declares: {declared}",
+            f"files present: {[str(p.relative_to(REPO)) for p in found]}, "
+            f"manifest declares: {declared!r}",
         )
+        if found and declared:
+            # Compare on the distinguishing word, so "MIT" matches "MIT License"
+            # but not an Apache or AGPL text.
+            body = found[0].read_text().lower()
+            token = declared.lower().split("-")[0]
+            self.assertIn(
+                token,
+                body,
+                f"manifest declares {declared!r} but {found[0].name} does not mention it",
+            )
 
     def test_pointers_resolve(self):
         self.assertTrue((PLUGIN / MANIFEST["skills"]).is_dir())
         self.assertTrue((PLUGIN / MANIFEST["mcpServers"]).is_file())
 
-    def test_one_default_prompt_per_skill(self):
-        """Adding a skill without an entry here leaves it undiscoverable."""
-        self.assertEqual(len(MANIFEST["interface"]["defaultPrompt"]), len(SKILL_DIRS))
+    def test_no_skill_is_left_without_a_default_prompt(self):
+        """A cardinality tripwire only: it cannot tell which skill a prompt names,
+        so per-skill discoverability is covered by the agent-config check below."""
+        self.assertGreaterEqual(
+            len(MANIFEST["interface"]["defaultPrompt"]),
+            len(SKILL_DIRS),
+            "fewer defaultPrompt entries than skills — at least one is undiscoverable",
+        )
 
 
 class SkillStructureTests(unittest.TestCase):
@@ -168,7 +197,9 @@ class SkillStructureTests(unittest.TestCase):
         for skill_dir in SKILL_DIRS:
             with self.subTest(skill=skill_dir.name):
                 self.assertRegex(
-                    frontmatter(skill_dir / "SKILL.md"), re.compile(r"^description:", re.M)
+                    frontmatter(skill_dir / "SKILL.md"),
+                    re.compile(r"^description:\s*\S", re.M),
+                    "description: is present but empty",
                 )
 
     def test_every_skill_has_an_agent_config_naming_itself(self):
@@ -208,12 +239,29 @@ class ToolWiringTests(unittest.TestCase):
         text = (SKILLS_DIR / LOCAL_SKILL / "SKILL.md").read_text()
         self.assertEqual(tool_mentions(text), set())
 
+    def test_every_tool_name_matches_the_prefix_convention(self):
+        """`tool_like_tokens` keys off these verbs, so a tool added under a new
+        one would be invisible to the check below. Fail here instead."""
+        for name in sorted(TOOL_NAMES):
+            with self.subTest(tool=name):
+                self.assertTrue(
+                    tool_like_tokens(name),
+                    f"{name} uses a verb prefix tool_like_tokens does not know",
+                )
+
     def test_tool_names_quoted_in_the_skills_all_exist(self):
-        """A renamed tool otherwise leaves instructions that cannot be followed."""
+        """A renamed tool otherwise leaves instructions that cannot be followed.
+
+        Two readers, because either alone has a gap: the prefix scan catches bare
+        references (`start_embedding_run` in prose) but only under known verbs,
+        while the call-form scan catches any verb (`cancel_run({...})`) but only
+        when written as a call.
+        """
         for skill_dir in SKILL_DIRS:
             if skill_dir.name == LOCAL_SKILL:
-                continue  # calls the helical package, not our tools
-            for call in sorted(tool_like_tokens((skill_dir / "SKILL.md").read_text())):
+                continue  # references the helical package's own functions, not our tools
+            text = (skill_dir / "SKILL.md").read_text()
+            for call in sorted(tool_like_tokens(text) | tool_calls(text)):
                 with self.subTest(skill=skill_dir.name, tool=call):
                     self.assertIn(call, TOOL_NAMES)
 
@@ -235,7 +283,9 @@ class DocumentationDriftTests(unittest.TestCase):
         text = path.read_text()
         expected = len(server.TOOLS)
         checked = 0
-        for claim in re.findall(r"\b([\w-]+)\s+tools\b", text):
+        # The lookbehind skips section references: "§7 tools" must not read as a
+        # claim that seven tools exist.
+        for claim in re.findall(r"(?<![§\w-])([\w-]+)\s+tools\b", text):
             normalised = claim.lower()
             stated = int(normalised) if normalised.isdigit() else NUMBER_WORDS.get(normalised)
             if stated is None:
@@ -261,6 +311,13 @@ class DocumentationDriftTests(unittest.TestCase):
             self._assert_count_claims(REPO / "PLAN.md"),
             0,
             "PLAN.md states no tool count this test could check — it passed vacuously",
+        )
+
+    def test_design_tool_count(self):
+        self.assertGreater(
+            self._assert_count_claims(REPO / "DESIGN.md"),
+            0,
+            "DESIGN.md states no tool count this test could check — it passed vacuously",
         )
 
 

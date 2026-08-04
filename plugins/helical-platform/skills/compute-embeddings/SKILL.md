@@ -87,7 +87,7 @@ and `s3_key`.
 
 - `list_files({ path })` on the run's output directory to see what was produced.
 - `list_s3_files({ path? })` lists an object-storage prefix **non-recursively**, across the
-  caller's projects. Use it when a `s3_key` from `artifacts[]` needs to be located or
+  caller's projects. Use it when an `s3_key` from `artifacts[]` needs to be located or
   confirmed to exist; use `list_files` for walking a run's output directory.
 - `read_file({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
   matrix is a binary `.npy` — it cannot be read through this tool. Report its path and let

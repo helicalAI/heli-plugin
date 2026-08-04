@@ -235,8 +235,8 @@ Per DESIGN §5.4. Not an ops detail: per-token pricing means we absorb all compu
 ## Milestone 6 — heli-plugin artifacts
 
 - `.mcp.json`: remote Streamable HTTP entry for deployed helical-mcp (STDIO scaffold retained for local dev).
-- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — sixteen tools, with the estimate-before-spend split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the deployed helical-mcp URL for production and replace the `example.com` manifest metadata.
-- Finalize `plugin.json` metadata (replace `example.com` placeholders — real values needed from the team).
+- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — sixteen tools, with the estimate-before-spend split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the deployed helical-mcp URL for production.
+- Settle the three open publication items in `plugin.json`, all decisions rather than edits: the **licence** (no LICENSE file ships today, so terms default to all-rights-reserved), the **privacy policy and terms URLs** (removed rather than guessed at — real paths needed), and whether **`capabilities: ["Read"]`** is accurate for a plugin that starts billable runs. Publisher, support and repository metadata are done.
 
 ## Milestone 6c — Local execution skill (#1844)
 
