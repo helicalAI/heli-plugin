@@ -48,9 +48,15 @@ ALLOWED_HOSTS = {
     "github.com",  # path-restricted below
 }
 
-SPELLED = {
-    12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen",
-    17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
+# Resolves a written count to an integer. One direction only, deliberately: a
+# reverse int -> word lookup would raise KeyError the moment the tool surface
+# outgrew the table, turning a documentation-drift failure into a crashed test.
+# A claim this cannot resolve (prose like "the tools", or a hyphenated
+# "twenty-one") is skipped rather than guessed at.
+NUMBER_WORDS = {
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30,
 }
 
 _spec = importlib.util.spec_from_file_location(
@@ -196,9 +202,11 @@ class ToolWiringTests(unittest.TestCase):
         self.assertEqual(declared_mcp_servers(config), [])
         self.assertNotIn("dependencies:", config)
 
-    def test_the_local_skill_calls_no_hosted_tool(self):
-        calls = tool_calls((SKILLS_DIR / LOCAL_SKILL / "SKILL.md").read_text())
-        self.assertEqual(calls & TOOL_NAMES, set())
+    def test_the_local_skill_references_no_hosted_tool(self):
+        """Any mention, not just a call: `list_datasets` in backticks would read
+        as an instruction to the agent just as much as `list_datasets({...})`."""
+        text = (SKILLS_DIR / LOCAL_SKILL / "SKILL.md").read_text()
+        self.assertEqual(tool_mentions(text), set())
 
     def test_tool_names_quoted_in_the_skills_all_exist(self):
         """A renamed tool otherwise leaves instructions that cannot be followed."""
@@ -226,22 +234,34 @@ class DocumentationDriftTests(unittest.TestCase):
     def _assert_count_claims(self, path: Path):
         text = path.read_text()
         expected = len(server.TOOLS)
-        for claim in re.findall(r"\b(\w+)\s+tools\b", text):
+        checked = 0
+        for claim in re.findall(r"\b([\w-]+)\s+tools\b", text):
             normalised = claim.lower()
-            if normalised in SPELLED.values() or normalised.isdigit():
-                actual = int(normalised) if normalised.isdigit() else None
-                with self.subTest(file=path.name, claim=claim):
-                    self.assertEqual(
-                        actual if actual is not None else normalised,
-                        expected if actual is not None else SPELLED[expected],
-                        f"{path.name} says '{claim} tools'; the server defines {expected}",
-                    )
+            stated = int(normalised) if normalised.isdigit() else NUMBER_WORDS.get(normalised)
+            if stated is None:
+                continue  # prose, not a count
+            checked += 1
+            with self.subTest(file=path.name, claim=claim):
+                self.assertEqual(
+                    stated,
+                    expected,
+                    f"{path.name} says '{claim} tools'; the server defines {expected}",
+                )
+        return checked
 
     def test_readme_tool_count(self):
-        self._assert_count_claims(REPO / "README.md")
+        self.assertGreater(
+            self._assert_count_claims(REPO / "README.md"),
+            0,
+            "README states no tool count this test could check — it passed vacuously",
+        )
 
     def test_plan_tool_count(self):
-        self._assert_count_claims(REPO / "PLAN.md")
+        self.assertGreater(
+            self._assert_count_claims(REPO / "PLAN.md"),
+            0,
+            "PLAN.md states no tool count this test could check — it passed vacuously",
+        )
 
 
 if __name__ == "__main__":
