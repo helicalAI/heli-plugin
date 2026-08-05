@@ -159,13 +159,16 @@ class ManifestMetadataTests(unittest.TestCase):
         )
         if found and declared:
             # Compare on the distinguishing word, so "MIT" matches "MIT License"
-            # but not an Apache or AGPL text.
+            # but not an Apache or proprietary text. Word-bounded, not a substring:
+            # "MIT" occurs inside "permitted" and "transmit", both of which appear
+            # in ordinary licence boilerplate, so a substring test would accept
+            # almost any declaration against almost any file.
             body = found[0].read_text().lower()
-            token = declared.lower().split("-")[0]
-            self.assertIn(
-                token,
+            token = re.escape(declared.lower().split("-")[0])
+            self.assertRegex(
                 body,
-                f"manifest declares {declared!r} but {found[0].name} does not mention it",
+                re.compile(rf"\b{token}\b"),
+                f"manifest declares {declared!r} but {found[0].name} does not name it",
             )
 
     def test_pointers_resolve(self):

@@ -536,7 +536,9 @@ Those five gaps are the concrete content of the `platform-mcp` port (§2.3, §7.
 
 Its environment variables are `HELICAL_API_BASE_URL` (the dashboard origin), `HELICAL_API_TOKEN`, and `HELICAL_API_ROOT` — the route group, defaulting to `/api/agentcore-mcp`. Values never live in the repo. The client sends `conversationId`/`projectId` only when supplied, so pointing it at the port is a configuration change rather than a rewrite; a test asserts both path shapes.
 
-Publisher, support and repository metadata in `plugin.json` are set. Three items remain open before distribution, each a decision rather than an edit: the **licence** (the repo ships no LICENSE file, so the terms default to all-rights-reserved), the **privacy policy and terms URLs** (absent rather than guessed at), and whether **`capabilities: ["Read"]`** is honest for a plugin that starts billable runs.
+Publisher, support and repository metadata in `plugin.json` are set, and the repository ships a **proprietary, all-rights-reserved LICENCE** declared as `license: "Proprietary"`. Two items remain open before distribution, each a decision rather than an edit: the **privacy policy and terms URLs** (absent rather than guessed at), and whether **`capabilities: ["Read"]`** is honest for a plugin that starts billable runs.
+
+The licence reserves all rights and therefore grants an end user no right to run the plugin — correct while the repository is internal, but **distributing the plugin publicly requires adding an end-user grant** covering at least installation and use as supplied. That is a decision for counsel, not an edit.
 
 ### 8.3 Workflow skills
 
@@ -637,7 +639,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 7. **Dashboard, services**: move membership re-checks into each service being ported; replace `conversationId` scoping with subject-derived project resolution for the ported routes.
 8. **Billing**: add the price table (per-model coefficients derived from measured GPU-hours), token ledger (paid + free-grant credit classes, consumption ordering, expiry), row-locked balance check, and estimator service; compute tokens deterministically from dataset shape and the model coefficient — no dags-repo change is required — then debit at launch and refund terminal failures through idempotent ledger writes; add `get_balance` / `get_usage`.
 9. **helical-mcp**: reconcile its tool set with the current dashboard surface; implement the §7 tools; add the RFC 9728 metadata endpoint and OAuth challenge behavior; keep it sessionless.
-10. **Plugin artifacts**: point `.mcp.json` at the remote helical-mcp URL for production; settle the licence, the legal URLs, and the declared capabilities (§8.2).
+10. **Plugin artifacts**: point `.mcp.json` at the remote helical-mcp URL for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
 11. **Payments**: select the processor (Stripe is the seed, §5.3) and integrate it behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified idempotent webhooks, and the Helical-owned top-up page. The selection gates the integration but not the ledger, which is processor-agnostic by construction.
 12. **Implement the compute decision from Gate 0** (§5.4): under Variant A, fix the spot-versus-on-demand posture and its retry policy, pin the image the token coefficients were measured against, and decide whether Nebius stays as the overflow route; under Variant B, build the dispatch, per-run scoped credentials, and artifact registration that replace the DAG's. The *decision* belongs at Gate 0; only the implementation belongs here.
 13. **Launch readiness**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today.

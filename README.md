@@ -135,7 +135,7 @@ python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platfor
 python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/fine-tune-model
 ```
 
-Publisher, support and repository metadata are real. Still open before distribution: the licence (no LICENSE file ships), the privacy policy and terms URLs, and whether `capabilities` should say more than `Read` for a plugin that starts billable runs.
+Publisher, support, repository and licence metadata are real — the repo is **proprietary, all rights reserved** ([LICENSE](LICENSE)). Still open before distribution: the privacy policy and terms URLs, whether `capabilities` should say more than `Read` for a plugin that starts billable runs, and the end-user grant the current licence deliberately withholds.
 
 ## Add to a repo marketplace
 

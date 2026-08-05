@@ -1,0 +1,37 @@
+Copyright (c) 2026 Helical. All rights reserved.
+
+PROPRIETARY — NO LICENCE GRANTED
+
+This repository and its entire contents — the plugin, its skills, the MCP
+adapter, and the accompanying design and planning documentation — are the
+proprietary and confidential property of Helical.
+
+No licence, express or implied, is granted to any person or entity to use, copy,
+modify, adapt, translate, merge, publish, distribute, transmit, sublicense, sell,
+or create derivative works from any part of this repository, in whole or in part,
+except under a separate written agreement signed by Helical. No rights are
+granted by implication, estoppel, or otherwise.
+
+Possession of a copy of this repository does not grant any right to use it.
+
+TRADEMARKS
+
+Nothing in this notice grants any right to use the Helical name, logo, or any
+other Helical mark.
+
+THIRD-PARTY SOFTWARE
+
+This repository does not contain or redistribute the open-source `helical` Python
+package, which is licensed separately under AGPL-3.0. The `run-helical-locally`
+skill instructs a user to install that package on their own machine from its own
+distribution. The AGPL-3.0 governs that package; it does not govern this
+repository, and this notice grants no rights in it.
+
+NO WARRANTY
+
+This repository is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability, fitness
+for a particular purpose, and non-infringement. To the maximum extent permitted
+by applicable law, Helical shall not be liable for any claim, damages, or other
+liability, whether in an action of contract, tort, or otherwise, arising from,
+out of, or in connection with this repository or its use.

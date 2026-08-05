@@ -9,6 +9,7 @@
   },
   "homepage": "https://helical.bio",
   "repository": "https://github.com/helicalAI/heli-plugin",
+  "license": "Proprietary",
   "keywords": [
     "embeddings",
     "fine-tuning",
