@@ -191,9 +191,11 @@ Debit/refund idempotency (incl. DAG retries), concurrent-kickoff no-overdraft ra
 - The no-`oneOf`/`anyOf` rule does **not** apply here: it exists because the AgentCore Gateway rejects them, and this endpoint has no gateway. Keep closed schemas (`additionalProperties: false`) anyway — those are for the model, not the gateway.
 
 ### 3.3 Auth and discovery
-- `GET /.well-known/oauth-protected-resource` (RFC 9728) pointing at the tenant issuer, plus `401` + `WWW-Authenticate: Bearer resource_metadata="..."` so a client can discover where to authenticate.
-- Bearer verification reuses `cognito-bearer-auth.ts` with a **new surface** (`"platform-mcp"`), per the per-surface policy from M1.2 — not the `mcp` surface, whose allowlist is the Gateway's.
-- **Open**: Cognito does not support Dynamic Client Registration (RFC 7591), which the MCP OAuth flow otherwise expects. Confirm the target clients accept a pre-registered `client_id` shipped in the plugin config.
+**Authentication follows the existing OAuth proxy** (`infra/modules/tenant/user_pool_client_mcp.tf`), which is the source of truth for this design — see DESIGN §4. The proxy presents the DCR-compliant surface Cognito cannot, fakes registration onto its one confidential client, and proxies Authorization Code + PKCE to the hosted UI.
+
+- RFC 9728 metadata and the `401` + `WWW-Authenticate` challenge are the **proxy's** responsibility, not this endpoint's.
+- Bearer verification reuses `cognito-bearer-auth.ts` with a **new surface** (`"platform-mcp"`), per the per-surface policy from M1.2 — not the `mcp` surface, whose allowlist is the Gateway's. The allowlist contains the **proxy's** client id.
+- The token the dashboard sees is an ordinary Cognito access token; the proxy holds no privilege of its own.
 
 ### 3.4 Tests
 Protocol tests (`initialize` handshake, `tools/list` drift, `tools/call` dispatch), the 401 challenge and metadata document, and cross-user isolation through the endpoint as well as the REST routes.
@@ -206,8 +208,11 @@ Protocol tests (`initialize` handshake, `tools/list` drift, `tools/call` dispatc
 - Regression gate: `terraform plan` renders **no changes** for every existing tenant (both expressions are identity-preserving for `(enable_sso, allow_self_signup=false)`).
 
 ### 4.2 MCP app client
-- `modules/tenant/user_pool_client_mcp.tf`, count-gated on new `enable_mcp_client`: public (`generate_secret = null`), `allowed_oauth_flows = ["code"]`, `explicit_auth_flows = [ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_AUTH, ALLOW_USER_SRP_AUTH]`, scopes `["openid","email","${aws_cognito_resource_server.agentcore.identifier}/invoke"]`, `refresh_token_validity = 30` (days), callbacks from new `mcp_client_callback_urls` (pinned loopback `http://127.0.0.1:<port>/callback` + hosted callback; Cognito has no wildcard ports).
-- Publish client id to SSM per the `api`/`m2m` convention.
+**No new client.** `modules/tenant/user_pool_client_mcp.tf` already provisions the confidential OAuth-proxy client, gated on `enable_helical_mcp` and enabled on `stage-tenant`. Adding a second would collide on the `aws_cognito_user_pool_client.mcp` address and destroy its Secrets Manager entry on apply.
+
+- For the individual tenant, set `enable_helical_mcp = true` and `helical_mcp_public_url`.
+- The only Cognito-registered callback is the proxy's `<public_url>/auth/callback`; a client's own loopback redirect is handled by the proxy, so Cognito's lack of wildcard ports never arises.
+- Scope is the existing `agentcore/invoke`; no second resource server.
 
 ### 4.3 Individual tenant env dir
 - `envs/dev/individual-tenant/` (dev first): copy `envs/stage/qa-tenant/{main.tf,variables.tf,data.tf,outputs.tf}`; fix `data.tf` remote-state paths (dev eks, region globals); set `namespace`, `cognito_auth_sudomian` (expect the `amazoncognito.com` fallback if the 4-per-region custom-domain cap is hit), `allow_self_signup = true`, `enable_mcp_client = true`; gitignored tfvars (23 secrets/URLs).
