@@ -215,7 +215,7 @@ Protocol tests (`initialize` handshake, `tools/list` drift, `tools/call` dispatc
 - Scope is the existing `agentcore/invoke`; no second resource server.
 
 ### 4.3 Individual tenant env dir
-- `envs/dev/individual-tenant/` (dev first): copy `envs/stage/qa-tenant/{main.tf,variables.tf,data.tf,outputs.tf}`; fix `data.tf` remote-state paths (dev eks, region globals); set `namespace`, `cognito_auth_sudomian` (expect the `amazoncognito.com` fallback if the 4-per-region custom-domain cap is hit), `allow_self_signup = true`, `enable_mcp_client = true`; gitignored tfvars (23 secrets/URLs).
+- `envs/dev/individual-tenant/` (dev first): copy `envs/stage/qa-tenant/{main.tf,variables.tf,data.tf,outputs.tf}`; fix `data.tf` remote-state paths (dev eks, region globals); set `namespace`, `cognito_auth_sudomian` (expect the `amazoncognito.com` fallback if the 4-per-region custom-domain cap is hit), `allow_self_signup = true`, and `enable_helical_mcp = true` + `helical_mcp_public_url` to enable the existing OAuth-proxy client (§4.2); gitignored tfvars (23 secrets/URLs). Also set `COGNITO_PLATFORM_MCP_ALLOWED_CLIENT_IDS` to that proxy client's id in the configs repo.
 - Dashboard env for this tenant (configs repo `application.yaml`): `INDIVIDUAL_TENANT=true`, `COGNITO_ALLOWED_CLIENT_IDS`, `COGNITO_REQUIRED_SCOPE`, optional `FREE_MONTHLY_TOKENS`, `MAX_CONCURRENT_RUNS_PER_USER`.
 
 ### 4.4 Ingress posture for the MCP path
@@ -261,7 +261,7 @@ Two distribution blockers with no owner. **No customer-facing support or ticketi
 
 ## Milestone 7 — End-to-end verification & dogfood
 
-Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → PKCE link from Claude Code/Codex → upload `.h5ad` → register → estimate → confirm → embedding DAG runs → status shows tokens + charge → artifact downloads → ledger/balance consistent. Second account proves isolation (all reads on user A's ids → identical 404 shape). DESIGN §12 is the test checklist; the confirmation-skipping-client scenario validates §6.1 mitigations.
+Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → add the proxy URL in Claude Code/Codex and complete the browser login (dynamic registration against the proxy, Authorization Code + PKCE to Cognito behind it) → upload `.h5ad` → register → estimate → confirm → embedding DAG runs → status shows tokens + charge → artifact downloads → ledger/balance consistent. Second account proves isolation (all reads on user A's ids → identical 404 shape). DESIGN §12 is the test checklist; the confirmation-skipping-client scenario validates §6.1 mitigations.
 
 ---
 
