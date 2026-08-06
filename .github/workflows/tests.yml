@@ -1,0 +1,40 @@
+name: tests
+
+# The plugin's suite guards things nothing else executes — the tool contract in
+# mcp/server.py, and the skill/manifest consistency invariants. Until now it ran
+# only when someone typed the command by hand, which means a guard that does not
+# run and therefore protects nothing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # The plugin is deliberately dependency-free: mcp/server.py is stdlib-only
+      # so it can run wherever an agent host puts it, and the tests match. There
+      # is nothing to install, and `--python` is passed explicitly because the
+      # repo has no project file for uv to infer an interpreter from.
+      - name: Run the plugin test suite
+        run: uv run --python 3.12 python -m unittest discover -s plugins/helical-platform/tests -v
+
+      # server.py is what the agent host actually executes. If it will not parse
+      # on the interpreter a user is likely to have, the tests passing is beside
+      # the point.
+      - name: Byte-compile the MCP server on 3.11, 3.12 and 3.13
+        run: |
+          for v in 3.11 3.12 3.13; do
+            echo "--- python $v ---"
+            uv run --python "$v" python -m py_compile plugins/helical-platform/mcp/server.py
+          done
