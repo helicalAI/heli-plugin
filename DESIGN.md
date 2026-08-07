@@ -66,7 +66,9 @@ Within this tenant:
 
 Cost note: `modules/tenant` has no "lite" variant — a new tenant inherits 5 RDS instances, Redis, EFS, JupyterHub, and Airflow (28 required variables, 17 of them secrets). Right-sizing the individual tenant is an infra work item, not a blocker.
 
-Trim scope (settled in review): the consumer tenant needs only the dashboard, Airflow, and MLflow. JupyterHub and the Coder/VSCode surface are dropped, and Redis is an Airflow dependency that can go with them. That lands well below the enterprise tenant's five RDS instances; the exact trimmed module variant stays an infra work item. Note this trim assumes Variant A — if compute moves to a managed serverless platform (§5.5), Airflow leaves too and the tenant shrinks further, possibly to no Kubernetes at all.
+Trim scope (settled in review): the consumer tenant needs only the dashboard, Airflow, and — **from stage 2 onward** — MLflow. JupyterHub and the Coder/VSCode surface are dropped, and Redis is an Airflow dependency that can go with them.
+
+**MLflow can be deferred out of the launch tenant entirely.** Stage 1 is embeddings, whose DAG touches no MLflow (§7.0); the registry is first needed when fine-tuning registers a trained model. So the embed-only tenant is dashboard + Airflow, and MLflow — a service plus its RDS instance — arrives with stage 2 rather than at signup. Worth taking: it removes a whole component from the thing that has to work on day one, and the alternative is provisioning a registry that nothing writes to. That lands well below the enterprise tenant's five RDS instances; the exact trimmed module variant stays an infra work item. Note this trim assumes Variant A — if compute moves to a managed serverless platform (§5.5), Airflow leaves too and the tenant shrinks further, possibly to no Kubernetes at all.
 
 Compute locality is unresolved (§14), and it is not a purely operational question — three of its consequences reach billing correctness, so it is treated as its own decision in §5.4.
 
@@ -441,11 +443,15 @@ This is an accepted risk, revisit if the surface ever exposes destructive operat
 
 ### 7.0 Exposure roadmap
 
-Operations are exposed in this order, each gated behind its own allowlist and security review:
+Operations are exposed in this order, each gated behind its own allowlist and security review. **Stage 1 is the commitment; stage 3 is not yet one.**
 
-1. **Compute embeddings** — this section; the launch surface.
-2. **Fine-tune a model** — port of the `finetuning` DAG trigger (`agentcore-mcp/airflow/trigger/finetuning/`) plus run/status/artifact reuse from group (c)/(d). Fine-tuned models then appear in `list_models` with their own per-token price. Requires a fine-tuning entry in the price table and estimator (training tokens ≠ inference tokens).
-3. **Run a perturbation analysis** — port of the `perturbation` DAG trigger and perturbation-results routes (`agentcore-mcp/airflow/trigger/perturbation/`, `airflow/perturbation-results/`). Note the source route is the repo's reference for union-free request schemas.
+1. **Compute embeddings** — this section; the launch surface. **Touches no MLflow at all** (`embedding_dag.py` contains no MLflow reference), so nothing about model registration, workspaces, or the registry gates the launch.
+2. **Fine-tune a model** — port of the `finetuning` DAG trigger (`agentcore-mcp/airflow/trigger/finetuning/`) plus run/status/artifact reuse from group (c)/(d). Fine-tuned models then appear in `list_models` with their own per-token price. Requires a fine-tuning entry in the price table and estimator (training tokens ≠ inference tokens). **This is where MLflow enters** — via `db/finetuning.py` and the Nebius fine-tuning DAGs, because a trained model has to be registered somewhere. Automating per-user workspace creation (#1835) therefore belongs to this stage, not to signup.
+3. **Run a perturbation analysis (ISP)** — *tentative*. Port of the `perturbation` DAG trigger and perturbation-results routes (`agentcore-mcp/airflow/trigger/perturbation/`, `airflow/perturbation-results/`). The source route is the repo's reference for union-free request schemas.
+
+**The MLflow dependency is staged, not global.** Reading it as a platform-wide prerequisite is what made an earlier draft treat workspace provisioning as a launch blocker. Each stage should be checked the same way — what does *this* operation's DAG actually touch — rather than inheriting the union of every stage's dependencies.
+
+**If ISP is taken up, it needs a metering decision first.** The platform already meters in-silico perturbation for enterprise tenants through a *different* system: `ProjectTypeQuota.isp_credits_*` and `Project.isp_credits_from_pool`, an entitlement counter of runs drawn from a pooled per-tier allowance (`docs/COST_CONTROL.md`). B2C meters the same operation as money, per token, through `CreditLedger`. Two systems would then meter one operation, and which governs a B2C perturbation run is a product question, not an implementation detail. Embedding and fine-tuning have no such overlap — this is specific to ISP, and it is the main reason stage 3 is worth deciding on rather than assuming.
 
 Later stages reuse the group structure below (list → upload/select → estimate → run → results) and inherit all porting rules (§2.3), the estimator obligation (§5.2), and the confirmation policy (§6.1) unchanged — a new operation adds tools, never new authorization or billing semantics.
 

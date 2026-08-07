@@ -284,4 +284,4 @@ Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → add the p
 
 ## Explicitly deferred
 
-Fine-tuning and perturbation tools (DESIGN §7.0 stages 2–3; reuse this scaffolding + new `ModelPrice.operation` rows), final payment-processor decision, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).
+Fine-tuning (stage 2) and perturbation/ISP tools (stage 3, **tentative** — and it needs a metering decision first, since the platform already meters ISP for enterprise through `ProjectTypeQuota.isp_credits_*`; see DESIGN §7.0). Both reuse this scaffolding + new `ModelPrice.operation` rows, final payment-processor decision, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).
