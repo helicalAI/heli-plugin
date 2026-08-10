@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "description": "Compute embeddings and fine-tune Helical foundation models \u2014 hosted and billed per token, or locally on your own GPU with the open-source package.",
   "author": {
-    "name": "Example, Inc.",
-    "email": "plugins@example.com",
-    "url": "https://example.com"
+    "name": "Helical",
+    "email": "support@helical-ai.com",
+    "url": "https://helical.bio"
   },
-  "homepage": "https://example.com/helical-platform",
-  "repository": "https://github.com/example/helical-platform",
-  "license": "MIT",
+  "homepage": "https://helical.bio",
+  "repository": "https://github.com/helicalAI/heli-plugin",
+  "license": "Proprietary",
   "keywords": [
     "embeddings",
     "fine-tuning",
@@ -24,14 +24,12 @@
     "displayName": "Helical Platform",
     "shortDescription": "Embed and fine-tune with Helical models",
     "longDescription": "Upload single-cell datasets, pick a Helical foundation model, see the per-token cost before you commit, compute embeddings or fine-tune on your own labels, and download the results \u2014 or run the same models locally on your own GPU with the open-source helical package, at no cost and without your data leaving your machine.",
-    "developerName": "Example, Inc.",
+    "developerName": "Helical",
     "category": "Productivity",
     "capabilities": [
       "Read"
     ],
-    "websiteURL": "https://example.com/helical-platform",
-    "privacyPolicyURL": "https://example.com/privacy",
-    "termsOfServiceURL": "https://example.com/terms",
+    "websiteURL": "https://helical.bio",
     "defaultPrompt": [
       "Embed my dataset with a Helical model.",
       "Fine-tune a model on my labelled dataset.",

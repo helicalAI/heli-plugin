@@ -18,7 +18,7 @@ plugins/helical-platform/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
 │   ├── fine-tune-model/        # hosted: labelled dataset → trained, registered model
 │   └── run-helical-locally/    # local: the open-source package on the user's own GPU
-└── tests/test_server.py
+└── tests/                     # test_server.py + test_plugin_manifest.py
 ```
 
 ## Tool surface
@@ -135,7 +135,7 @@ python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platfor
 python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/fine-tune-model
 ```
 
-Replace all `example.com` publisher and legal URLs before distribution.
+Publisher, support, repository and licence metadata are real — the repo is **proprietary, all rights reserved** ([LICENSE](LICENSE)). Still open before distribution: the privacy policy and terms URLs, whether `capabilities` should say more than `Read` for a plugin that starts billable runs, and the end-user grant the current licence deliberately withholds.
 
 ## Add to a repo marketplace
 
