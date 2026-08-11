@@ -38,7 +38,8 @@ of those routes.
 
 ### Two surfaces, one client
 
-B2C users never open the platform UI — only signup, top-up, and sign-in (DESIGN.md §2.5).
+B2C users never open the platform UI — only the four account screens: sign-up, sign-in,
+top-up, and balance (DESIGN.md §2.5).
 The MCP routes still run on the dashboard's APIs and database; what the B2C port
 (`platform-mcp`, DESIGN.md §2.3) changes is the UI-shaped assumptions in them.
 

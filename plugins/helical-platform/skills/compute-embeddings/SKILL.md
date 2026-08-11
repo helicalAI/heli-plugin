@@ -13,7 +13,8 @@ Turns a catalogue dataset plus a foundation model into an embedding matrix and a
 
 **The one thing to understand before starting:** `start_embedding_run` consumes real
 compute and starts immediately. Nothing downstream will ask the user to confirm — there is
-no approval screen, because a B2C user never opens the platform UI. **You are the
+no approval screen, because a B2C user's platform UI is four account screens — sign up,
+sign in, top up, check balance — and nothing else. **You are the
 confirmation step.** State the dataset, the model, and what the run will do, and get an
 explicit yes before calling it.
 
@@ -31,8 +32,8 @@ string is present. Note `total` is the count across all pages, not the rows retu
 reporting, because run time scales with them.
 
 There is **no upload tool**: datasets must already exist in the catalogue. If the user has
-their own `.h5ad`, say plainly that this surface cannot ingest it and that they need to
-add it through the dashboard.
+their own `.h5ad`, say plainly that this surface cannot ingest it yet, and do not send them
+to the dashboard — a B2C account has no dataset screen to upload it through.
 
 ## 2. Choose a model
 
@@ -90,8 +91,9 @@ and `s3_key`.
   caller's projects. Use it when an `s3_key` from `artifacts[]` needs to be located or
   confirmed to exist; use `list_files` for walking a run's output directory.
 - `read_file({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
-  matrix is a binary `.npy` — it cannot be read through this tool. Report its path and let
-  the user fetch it from the dashboard; do not pretend to have inspected it.
+  matrix is a binary `.npy` — it cannot be read through this tool. Report its path and say
+  plainly that this surface has no way to hand over the bytes yet; do not pretend to have
+  inspected it, and do not point at a dashboard the user cannot reach.
 - For the UMAP, `list_umaps({ datasetId })` then `get_umap({ runId })` returns parsed
   coordinates and labels. The payload can be very large: summarise it, do not echo it.
 

@@ -10,7 +10,8 @@ Decisions (from DESIGN.md, confirmed by the product owner):
 
 - Full program, phased; each milestone independently landable and flag-gated.
 - **Token accounting is deterministic**: each row/cell costs a fixed number of tokens per model (data-prep + tokenizer dependent). Total = per-row factor × row count (× epochs for fine-tuning, × genes-to-perturb for perturbation, later). Estimate ≡ actual, so **billing needs no dags-repo change** and the debit can happen at launch.
-- Prepaid credits; Stripe-seeded top-up behind a provider interface; free monthly grant supported in schema, enablement is a launch parameter.
+- Prepaid credits; **Stripe** top-up behind a provider interface (#1838, decided); free monthly grant supported in schema, enablement is a launch parameter.
+- **Downloads return run outputs only, and uploaded inputs are never deleted** (#1972, DESIGN §5.6). Storage is therefore a monotonic, unpriced cost line that the token ledger cannot see, and a per-user cap is an open decision rather than a detail.
 - Confirmation is prompt-level (skill instructs the agent); no server-side `PendingConfirmation` on the MCP path. Mitigations: balance ceiling, per-user concurrent-run cap, estimate echoed at kickoff.
 
 Load-bearing repo facts (verified 2026-07-27):
@@ -46,7 +47,7 @@ Extract from the dashboard, ~450 lines of plain TypeScript: `constants/paths.ts`
 Root-level tRPC path allowlist (deny-by-default, `NOT_FOUND` for unclaimed routers) + `featureProcedure(capability)` for finer gates; widened `middleware.ts` matcher with a manifest-driven page-prefix check; `Sidebar.tsx` refactored to a data-driven `NAV_ITEMS` array. Do **not** prune the root router object — `AppRouter` is the client's type source. Jupyter/Coder and cross-indication porting become absent capabilities rather than bespoke conditionals. CI: capability completeness, "every route claimed by an edition", per-edition snapshots.
 
 ### 0.4 B2C edition surface — #1834
-`src/app/(b2c)/` route group for auth, sign-up, and checkout; `hideSignUp={!features.selfServeSignup}` in `authenticator.tsx`; scheduled reconciliation of the resolved sign-up capability against the pool's `admin_create_user_config`. Verify the `pilot`-project EDITOR landmine is absent in production.
+`src/app/(b2c)/` route group for the four account screens — sign-up, sign-in, top-up, balance (DESIGN §2.5); the balance page and the `get_balance` tool (#1767) read one shared aggregation rather than computing it twice; `hideSignUp={!features.selfServeSignup}` in `authenticator.tsx`; scheduled reconciliation of the resolved sign-up capability against the pool's `admin_create_user_config`. Verify the `pilot`-project EDITOR landmine is absent in production.
 
 **Sequencing:** 0.2 must land with M4.3 (the tenant's dashboard config declares the namespace, and boot fails on an unknown one). 0.4 must land with M4.1 (`allow_self_signup`), or app and identity provider disagree silently. 0.1 precedes anything that stamps `output_dir`, resolves a model name, or validates a DAG config.
 
@@ -142,7 +143,7 @@ Everything gated by env `INDIVIDUAL_TENANT=true`; flag off ⇒ zero behavior cha
 ### 1.4 Models + datasets tools
 - `listModels` — wraps `listModels` (`src/trpc/routers/models/list.ts`), promoted default, family filter, joined with `ModelPrice` (M2) to include `price_per_million_tokens`.
 - `createDatasetUpload` — net-new presigned PUT (add `@aws-sdk/s3-request-presigner`): short-lived URL under `datasetUploadPrefix(slug, username)`; extension validated against `ALLOWED_DATA_EXTS`, size cap.
-- `registerDataset` — lift `dataSc.analyzeUpload` + `dataSc.create` procedure bodies into a shared service (they are inline today); add an S3 `CopyObject` branch to `src/lib/relocateDatasetFile.ts` behind `storageBackend.useLocalFiles`. Returns dataset with `cellCount`/`geneCount` (estimator inputs).
+- `registerDataset` — lift `dataSc.analyzeUpload` + `dataSc.create` procedure bodies into a shared service (they are inline today); add an S3 `CopyObject` branch to `src/lib/relocateDatasetFile.ts` behind `storageBackend.useLocalFiles`. Returns dataset with `cellCount`/`geneCount` (estimator inputs). **Also persist the object's byte size** — `DataScMeta` has no size column today (`sizeBytes` in the schema belongs to `AgentOutputArtifactMeta`), the file is retained indefinitely, and reconstructing the figure later means walking S3 per user (#1761).
 - `listDatasets` / `getDataset` — port of `agentcore-mcp/data/` handlers, subject-project-scoped.
 
 ### 1.5 Embedding-run tools
@@ -152,7 +153,7 @@ Everything gated by env `INDIVIDUAL_TENANT=true`; flag off ⇒ zero behavior cha
 
 ### 1.6 Results tools
 - `listResults` / `searchResults` — `ArtifactMeta` rows joined to the subject's runs; filters: model, dataset, date, free-text on `displayName`.
-- `downloadResult` — net-new presigned GET for `ArtifactMeta.s3Key` via `mountPathToBucketKey` + `getS3Client`/`getTenantBucket` (`src/lib/s3Utils.ts`); short-lived, subject-bound.
+- `downloadResult` — net-new presigned GET for `ArtifactMeta.s3Key` via `mountPathToBucketKey` + `getS3Client`/`getTenantBucket` (`src/lib/s3Utils.ts`); short-lived, subject-bound. **Signs output keys only** (#1972): it resolves the key from an `ArtifactMeta` row rather than from a caller-supplied path, so an uploaded dataset has no row to name. `readFile` and `listS3Files` walk the project prefix and are the way around that, so they need the same input/output split — otherwise the rule holds only for the one tool that states it.
 
 ### 1.7 Isolation test suite
 - Cross-user denial for every tool (unauthorized ≡ nonexistent in status/shape/wording); `projectScopeRule` ESLint clean; `docs/DATA_SEPARATION.md` checklist walked for each new data-touching path.
@@ -163,7 +164,11 @@ Prisma per `prisma/README.md` rules: inline model comments, ERD + Ownership-boun
 
 ### 2.1 Schema
 - `ModelPrice` — `{ id, model, version?, operation (embedding|finetuning|perturbation), tokensPerRow Decimal, priceMicroUsdPerMToken Int, active, effectiveAt }`; seeded by migration.
-- `CreditLedger` — append-only: `{ id, userId, entryType (topup|grant|debit|refund|expiry), creditClass (paid|free), amountMicroUsd Int (signed), tokens Int?, runMetaId? , quoteId?, periodKey?, providerRef?, createdAt }`. Partial unique indexes: `(runMetaId, entryType)` for debit/refund idempotency; `(userId, periodKey, entryType)` for once-per-period grants; unique `providerRef` for webhook idempotency (enforced in migration SQL, documented in README prose).
+- `CreditLedger` — append-only: `{ id, userId, entryType (topup|grant|debit|refund|expiry), creditClass (paid|free), amountMicroUsd BigInt (signed), tokens BigInt?, runMetaId? , quoteId?, periodKey?, providerRef?, createdAt }`. Partial unique indexes: `(runMetaId, entryType)` for debit/refund idempotency; `(userId, periodKey, entryType)` for once-per-period grants; unique `providerRef` for webhook idempotency.
+
+  Two corrections from building it (#1917): the amount and token columns are **`BigInt`, not `Int`** — int32 tops out at $2,147.48 in micro-USD and below the token count of a single multi-million-cell dataset — and the partial indexes are **declared in `schema.prisma`**, not hand-written into the migration. `previewFeatures = ["partialIndexes"]` is already enabled and `uq_project_pilot` already uses it; writing them only in SQL means the next `prisma migrate dev` drops all three. The migration is still hand-authored for the CHECK constraints, which the datamodel genuinely cannot express, and its index predicates must match Prisma's own rendering byte-for-byte (`WHERE ("active" = true)`, not `WHERE "active"`) or `prisma-check` fails on drift.
+
+  `runMetaId` must be **`ON DELETE RESTRICT`**: a billed run should not be deletable out from under its ledger entry, because `SET NULL` blanks the discriminator that the debit/refund idempotency index and the `credit_ledger_discriminator_present` CHECK both depend on — the CHECK would reject the very update the FK performs. The #1917 branch still carries `SET NULL`; correcting it is outstanding on that PR.
 - `EstimateQuote` — `{ id, userId, model, modelVersion?, datasetId, operation, tokens, priceMicroUsdPerMToken, totalMicroUsd, assumptions Json, expiresAt }`.
 
 ### 2.2 Services (`src/lib/billing/`)
@@ -231,13 +236,32 @@ Per DESIGN §5.4. Not an ops detail: per-token pricing means we absorb all compu
 - **Remove `node_type`/`num_devices` from `start_embedding_run`** (M1.5): the platform picks the compute profile the coefficient was priced against, otherwise a caller can multiply our cost at a fixed price.
 - **Evaluate the managed options** against measured GPU-hours, not list prices: **Modal** is the designated escape hatch (per-second, scale-to-zero, and the embedding compute is a single containerised CLI so only one task moves); **Baseten** is serving-oriented and a partial fit; **Runware** was evaluated and ruled out — it is a generative-media inference API whose bring-your-own-weights is limited to diffusion artifacts, with no arbitrary containers or batch GPU compute, so it cannot run the bio-agent image at all.
 
-## Milestone 5 — Dashboard: payment processor selection + Stripe-seeded top-up
+## Milestone 5 — Dashboard: Stripe top-up (#1776)
 
-- **Select the processor** (#1838). Stripe is the seed, not a decision; the choice gates the integration but not the ledger, which is processor-agnostic by construction. Decide before this milestone starts.
+- **The processor is Stripe** (#1838, closed). The provider interface stays anyway — it is what keeps Stripe vocabulary out of the ledger, not a hedge against a swap.
 - `src/lib/billing/provider.ts` interface: `createTopUpSession(user, amountMicroUsd)`, `verifyWebhookEvent(req)`, `refund(providerRef)`; Stripe implementation (Checkout session bound to `userId`).
 - The top-up page is Helical-owned on our domain; the provider's hosted checkout collects card details. We never render a payment form, and the MCP surface only ever hands out a short-lived URL (DESIGN §5.3).
-- `POST /api/billing/webhook`: signature + freshness verification; `checkout.session.completed` → `topup` ledger entry, idempotent on `providerRef`. Success/cancel pages.
+- `POST /api/billing/webhook`: signature + freshness verification; `checkout.session.completed` → `topup` ledger entry, idempotent on `providerRef` = **Stripe's `event.id`, not the Checkout session id**. One session emits several events (`completed`, then `async_payment_succeeded`/`_failed` for delayed methods) and Stripe redelivers after a non-2xx or timeout, so a session-keyed check either swallows a legitimate later event or double-credits a redelivery. Success/cancel pages.
 - `insufficient_balance` responses embed the short-lived session URL.
+
+## Milestone 5b — Metrics: adoption, retention, spend (#1971)
+
+The ledger records what we charge, which is not the same as whether the product works. A user who signs up, lists models and never starts a run writes no ledger row at all — and that is the cohort a funnel exists to see. So the events are emitted server-side from the transactions that already own the facts (no client-reported steps; the MCP surface has no browser to carry an analytics SDK), and they land before distribution rather than after (DESIGN §5.7).
+
+- **Adoption** — signup, first authenticated MCP call, first estimate, first started run, with the drop-off between each step.
+- **Retention** — weekly/monthly returning cohorts, runs per active user, interval between runs. `User.lastActiveAt` cannot serve as the series: it is a single overwritten column and the write is throttled to at most once per 24 h (`ACTIVITY_STALE_MS` in `src/lib/auth-db.ts`), so it answers dormancy for the 90-day soft delete and nothing finer.
+- **Spend** — top-ups, tokens by model, free-grant vs paid consumption, refunds, unspent balance — aggregated from `CreditLedger`, set against the per-user cost side (GPU-hours **and** stored bytes, M5c).
+- Per-user data is internal-only under DESIGN §9: no user-facing response carries another user's activity or a cross-user total.
+
+## Milestone 5c — Storage: the second cost line (#1972, #1761, #1888)
+
+Two decisions taken together: **downloads return run outputs only**, and **inputs are never deleted after a run**. The first stops the plugin being used as readable free cloud storage; the second is required because re-embedding with another model, re-estimating and any later fine-tune all read the original file. Together they leave us running write-only storage at our own expense — uncapped, unbilled, and today unmeasurable without walking S3.
+
+Verified against `dashboard@develop`: `ProjectTypeQuota` has no storage column; `DataScMeta` records `cellCount` but no size; `modules/tenant` has no lifecycle rule on project data (the only `expiration` block is on the server-logging bucket); metering charges per token of compute, so stored bytes debit nothing.
+
+- Record the byte size at registration (M1.4, #1761) — the prerequisite for every figure below.
+- Report storage per user alongside GPU-hours (#1888). A user who uploads 50 GB, runs one small embedding and never returns is compute-positive and overall negative; a GPU-hours-only view calls them healthy.
+- A per-user storage cap is an **open decision**, not a task (DESIGN §14): `ProjectTypeQuota` is where it would live, and adding a column there obliges every existing tier to get a value, since a missing quota row fails closed rather than reading as unlimited (`docs/COST_CONTROL.md`).
 
 ## Milestone 6 — heli-plugin artifacts
 
@@ -257,7 +281,7 @@ Per DESIGN §7.2. A third skill, `run-helical-locally`, driving the open-source 
 
 ## Milestone 6b — Launch readiness (#1836)
 
-Two distribution blockers with no owner. **No customer-facing support or ticketing channel exists**, which makes the "contact support" branch of the §6 error table a dead end; a dedicated public issue tracker is the cheapest credible option. And the retention/deletion policy must be written to match reality — the account lifecycle already soft-deletes after 90 days of inactivity, so the policy has to state what that does to project contents, artifacts, and **unspent credit**, which is a refund question as well as a data question.
+Two distribution blockers with no owner. **No customer-facing support or ticketing channel exists**, which makes the "contact support" branch of the §6 error table a dead end; a dedicated public issue tracker is the cheapest credible option. And the retention/deletion policy must be written to match reality on three counts: the account lifecycle already soft-deletes after 90 days of inactivity, so the policy has to state what that does to project contents and artifacts; **unspent credit** is a refund question as well as a data question; and **we hold uploaded inputs indefinitely with no way for the user to retrieve them** (M5c), so asking us to delete is their only control over that data and the policy must name the three paths that end retention — account deletion, erasure on request, and the inactivity boundary. One wording trap: the `CreditLedger` is append-only and outlives the artifacts it refers to, so "we deleted everything" must not be phrased in a way that a later, correct historical charge contradicts.
 
 ## Milestone 7 — End-to-end verification & dogfood
 
@@ -272,7 +296,9 @@ Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → add the p
 - M4.1–4.2 (Cognito module changes, default-off) can land any time, subject to the two pairing constraints in M0.
 - M3 (the MCP endpoint) needs M1.1's injectable registry and M1.3's subject scoping; the protocol layer can be built against a handful of read-only tools before the rest land.
 - M4.3–4.4, M5, M6, M6b follow; M7 last.
-- **M4b must be settled before the first paying user** — the spot default silently costs money on every interrupted run. The processor selection in M5 must be settled before M5 starts.
+- **M5b (metrics) lands before distribution, not after.** It is cheap and it is the only milestone whose value is destroyed by being late: the funnel steps that matter are the ones users never reach, and an unrecorded non-event cannot be backfilled.
+- M5c's one blocking piece is the byte-size column in M1.4 — free at upload, expensive to reconstruct. The reporting and the cap decision can follow at any time.
+- **M4b must be settled before the first paying user** — the spot default silently costs money on every interrupted run. M5's processor question is closed (#1838: Stripe).
 
 ## Per-repo verification
 
@@ -284,4 +310,4 @@ Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → add the p
 
 ## Explicitly deferred
 
-Fine-tuning (stage 2) and perturbation/ISP tools (stage 3, **tentative** — and it needs a metering decision first, since the platform already meters ISP for enterprise through `ProjectTypeQuota.isp_credits_*`; see DESIGN §7.0). Both reuse this scaffolding + new `ModelPrice.operation` rows, final payment-processor decision, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).
+Fine-tuning (stage 2) and perturbation/ISP tools (stage 3, **tentative** — and it needs a metering decision first, since the platform already meters ISP for enterprise through `ProjectTypeQuota.isp_credits_*`; see DESIGN §7.0). Both reuse this scaffolding + new `ModelPrice.operation` rows, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).

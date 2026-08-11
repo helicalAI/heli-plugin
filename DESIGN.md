@@ -74,7 +74,7 @@ Compute locality is unresolved (§14), and it is not a purely operational questi
 
 ### 2.3 Porting rules for the MCP façade
 
-The MCP surface **replicates the relevant `agentcore-mcp` routes into a B2C route group**. It is a port, not a second system: the replicas keep calling the dashboard's own application services and the dashboard's database. What they shed is the *UI-shaped* assumptions, because a B2C user never opens the platform UI — only the signup, top-up, and sign-in screens (§2.5). Concretely that means dropping the `conversationId` those routes use to resolve and authorize a project, and dropping the in-chat approval queue, which would otherwise queue an approval into a screen the user will never see (§6.1).
+The MCP surface **replicates the relevant `agentcore-mcp` routes into a B2C route group**. It is a port, not a second system: the replicas keep calling the dashboard's own application services and the dashboard's database. What they shed is the *UI-shaped* assumptions, because a B2C user never opens the platform UI — only the four account screens: sign-up, sign-in, top-up, and balance (§2.5). Concretely that means dropping the `conversationId` those routes use to resolve and authorize a project, and dropping the in-chat approval queue, which would otherwise queue an approval into a screen the user will never see (§6.1).
 
 - each tool maps to an existing dashboard route or shared service (`src/trpc/routers/**` service modules, `agentcore-mcp` handlers), preserving its validation, Zod contract, and policy behavior;
 - **every ported or new service re-checks membership itself.** Today, shared services take `(prisma, args)` and rely on the calling procedure/route for authorization; that caveat is retired. The subject→project resolution and the membership check move into the service, so no caller can reach data by skipping the gate;
@@ -172,6 +172,8 @@ The MCP surface is deliberately **structural rather than flag-gated**: it is its
 
 For the new B2C screens, add a `src/app/(b2c)/` route group rather than restructuring the eleven existing top-level page directories. The repo has no route groups today, so this establishes the convention cheaply and gives the two editions genuinely different shells without touching B2B pages.
 
+**The `b2c` edition is exactly four screens**, and this list is what the rest of the design means by "the user never opens the platform UI": **sign-up, sign-in, top-up, and balance**. Balance is the one that is not self-evident — a prepaid product whose only reading of the balance is through an agent leaves a user who has run out of credit with no way to see why, and the `insufficient_balance` error (§5.3) sends them to a top-up page that would otherwise be the only account screen they ever reach. Everything else — projects, datasets, chat, files, indications — stays unreachable at the API and route layers.
+
 #### Closing the app/infrastructure skew
 
 This is the sharpest existing risk, and it is live today. The app renders Amplify's sign-up tab unconditionally — there is no `hideSignUp` anywhere in the repo — so whether self-registration actually works is decided entirely by Cognito's `admin_create_user_config`, set in Terraform. The application and the identity provider can therefore disagree silently, and §4.1's new `allow_self_signup` variable makes that worse if the app is not gated in step. Three mitigations:
@@ -221,7 +223,7 @@ flowchart LR
     L["Token ledger + price table"]
     E["Estimator"]
     P["Airflow / MLflow / S3"]
-    W["Payment provider webhook<br/>(Stripe-seeded, §5.3)"]
+    W["Stripe webhook<br/>(§5.3)"]
 
     U --> H
     H <-->|"add URL, dynamic registration"| X
@@ -240,7 +242,7 @@ flowchart LR
 - The proxy exists to give MCP clients dynamic registration, which Cognito does not offer (§4.3). It holds the client secret and nothing else: the token it obtains is an ordinary Cognito access token, and the dashboard verifies every forwarded token and remains the sole authorization authority.
 - The dashboard MCP endpoint stays sessionless and credential-free.
 - The token ledger is written server-side from authoritative run outputs — never from client-supplied counts.
-- Checkout/top-up happens on the merchant domain; the payment processor is still an open decision, seeded with Stripe (§5.3).
+- Checkout/top-up happens on the merchant domain, through Stripe (decided, §5.3).
 
 ## 4. Identity, signup, and account linking
 
@@ -312,7 +314,9 @@ Common to all of them:
 
 ### 5.3 Billing events
 
-Checkout/top-up stays on the merchant domain. The processor decision is **left open but seeded with Stripe**: design against Stripe Checkout sessions and signed webhooks (`checkout.session.completed` crediting the ledger), and keep the integration behind a thin provider interface (create-top-up-session, verify-webhook, refund) so the seed can be swapped without touching the ledger or tools.
+Checkout/top-up stays on the merchant domain. **The processor is Stripe** (decided; the seed became the choice): Stripe Checkout sessions and signed webhooks (`checkout.session.completed` crediting the ledger), kept behind a thin provider interface (create-top-up-session, verify-webhook, refund) so the ledger and the tools stay processor-agnostic. The interface survives the decision because it is what keeps the ledger free of Stripe vocabulary, not because a swap is expected.
+
+**The webhook's idempotency key is the event id, not the session id.** One Checkout session emits several events over its life (`checkout.session.completed`, then `async_payment_succeeded` or `async_payment_failed` for delayed methods), and Stripe redelivers events after a non-2xx or a timeout. Keying the credit on `session.id` therefore either drops a legitimate second event or double-credits a redelivery, depending on which way the check is written; keying on `event.id` is exactly once per delivered event. `CreditLedger.providerRef` (unique, §5.1) is where that key is enforced, at the database rather than in the handler.
 
 1. A billable call with insufficient balance returns `insufficient_balance` with a short-lived, subject-bound top-up URL (no credentials embedded).
 2. The provider's verified, idempotent webhook credits the ledger (paid credit class).
@@ -391,6 +395,40 @@ Public documentation does not settle these, and each one changes the answer:
 
 This decision therefore cannot sit at step 12 of §11, after the tenant has been built. It determines whether steps 5–9 are the right work at all. **It is promoted to a gate before the infrastructure work begins.** The recommendation in §5.4 — launch on AWS — is unchanged, and choosing it deliberately and early is exactly the point; what is not acceptable is discovering at step 12 that the answer was Modal and that the tenant, the Airflow deployment, and the fuse-mount assumptions were all built for the other variant.
 
+### 5.6 Storage: the cost line tokens do not track
+
+Two decisions taken together create a cost that the metering model above cannot see.
+
+- **Downloads return run outputs only, never uploaded input data.** A user can retrieve embeddings, UMAPs, fine-tuned weights and logs; they cannot retrieve the `.h5ad` they uploaded. Without this the plugin is usable as free, unmetered cloud storage — upload, retrieve later, never run anything — and the storage is the whole product being consumed.
+- **Inputs are not deleted after a run.** Re-embedding the same dataset with a different model, re-estimating, and any later fine-tune all read the original file, so deleting it after the first run would make the second run impossible.
+
+**Together these invert the abuse case rather than closing it.** Blocking the download stops *readable* storage; indefinite retention leaves us operating **write-only storage at our own expense**. The user gets nothing back and we pay indefinitely, which is a worse trade than the one the download rule was written to prevent. It is bounded only by upload effort.
+
+Nothing in the platform currently bounds or even measures it, verified against `dashboard@develop`:
+
+- `ProjectTypeQuota` has no storage column — projects, ISP credits, `ftMaxCells`, HPO trials, two feature flags. No bytes.
+- `DataScMeta` records `cellCount` but no file size. (`sizeBytes` in that schema belongs to `AgentOutputArtifactMeta` — code-execution outputs, not datasets.)
+- `modules/tenant` has no S3 lifecycle rule on project data; the only `expiration` block is on the server-logging bucket.
+- Metering charges per token of compute, so stored bytes debit nothing.
+
+So three things follow, and they are work items rather than observations:
+
+1. **Record the object's byte size at registration** (§7.1b). It is free at upload time, when the length is already known, and reconstructing it later requires walking S3 per user.
+2. **Report storage beside compute** (§5.7). A user who uploads 50 GB, runs one small embedding and never returns is revenue-positive on compute and negative overall — and a GPU-hours-only view reports them as healthy.
+3. **A per-user storage cap is the natural bound, and it is an open decision** (§14), not a detail. `ProjectTypeQuota` is where allowances live, but adding a column there means every existing tier needs a value: `docs/COST_CONTROL.md` refuses a tier with no quota row rather than treating a missing row as unlimited.
+
+### 5.7 What we measure
+
+Metering answers "what do we charge". It does not answer "is this working", and the three questions the product actually turns on — adoption, retention, spend — cannot be reconstructed after the fact from a ledger that only records billable events. A user who signs up, browses models and never starts a run leaves no ledger row at all, and that user is the single most important cohort to a funnel.
+
+The measurement therefore has to be designed alongside the ledger, from events that are already crossing the boundary:
+
+- **Adoption** — signups, first authenticated MCP call, first estimate, first started run, and the drop-off between each. The gap from *installed the plugin* to *started a run* is the funnel; each step must be an event, because the interesting cohorts are the ones that stop.
+- **Retention** — returning users by week and month cohort, runs per active user, and the interval between consecutive runs. `touchUserActivity` already stamps `User.lastActiveAt`, but it cannot serve as the series: it is a single overwritten column, and the write is deliberately throttled to at most once per 24 hours, so it answers "is this account dormant" for the 90-day soft delete and nothing finer.
+- **Spend** — top-ups, tokens consumed by model, free-grant versus paid consumption, refunds, and balance left unspent. The ledger holds all of this; what is missing is the aggregation and the per-user cost side to set against it (§5.6, §5.4).
+
+Two constraints on how this is built. It is **per-user data under §9**: aggregates are internal, and no user-facing response exposes another user's activity or any cross-user total. And the events must be emitted **server-side from the same transactions that already own the facts** — a client-reported funnel step from an agent host we do not control is not evidence, and the MCP surface has no browser to carry a front-end analytics SDK in the first place.
+
 ## 6. Protocol behavior and error model
 
 Authentication, entitlement, and service failures stay distinct:
@@ -431,7 +469,7 @@ Do not use an OAuth challenge as a checkout redirect; do not rely on HTTP `402` 
 
 The dashboard's chat surface gates expensive launches through a server-side approval queue: every `trigger*` route calls `enqueueDagLaunch`, returns `{status: "pending_approval", confirmation_id}`, and nothing executes until a human approves it in the dashboard chat.
 
-**That queue is not merely bypassed here — it is unavailable.** It resolves the project from a `conversationId`, and it renders the approval in a dashboard chat. A B2C user has no conversation and never opens the dashboard UI beyond signup, top-up, and sign-in (§2.5). An approval queued for them would render in a screen they will never look at, so the run would simply never start. Confirmation must therefore happen in the client the user is actually in — the CLI or chat app hosting the plugin:
+**That queue is not merely bypassed here — it is unavailable.** It resolves the project from a `conversationId`, and it renders the approval in a dashboard chat. A B2C user has no conversation and never opens the dashboard UI beyond the four account screens (§2.5). An approval queued for them would render in a screen they will never look at, so the run would simply never start. Confirmation must therefore happen in the client the user is actually in — the CLI or chat app hosting the plugin:
 
 - MCP tools execute directly; `start_embedding_run` launches the DAG without a server-side approval step;
 - the **skill instructs the agent** to present the estimate (tokens, price, balance impact) and obtain the user's explicit confirmation before calling `start_embedding_run`;
@@ -466,7 +504,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### b. Datasets
 
 - **`create_dataset_upload`** — returns a short-lived, project-scoped presigned S3 PUT URL for a new dataset file (`.h5ad` first). The MCP transport never carries file bytes.
-- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services — the procedure bodies are inline today and need lifting into a shared service) and returns the dataset record with row/gene counts.
+- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services — the procedure bodies are inline today and need lifting into a shared service) and returns the dataset record with row/gene counts. It must also **persist the object's byte size**, which `DataScMeta` does not record today: the length is already known at upload, the file is retained indefinitely (§5.6), and without the column any per-user storage figure or cap requires walking S3.
 - **`list_datasets`** / **`get_dataset`** — port of the data catalog routes (`agentcore-mcp/data/`), including columns/obs metadata needed for estimation.
 
 ### c. Embedding runs
@@ -478,7 +516,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### d. Results
 
 - **`list_results`** / **`search_results`** — completed runs with their artifacts, filterable by model, dataset, date, and free-text label.
-- **`download_result`** — short-lived presigned GET URL for a named artifact (embedding matrices, UMAPs). URLs are subject-bound and carry no reusable credentials.
+- **`download_result`** — short-lived presigned GET URL for a named artifact (embedding matrices, UMAPs). URLs are subject-bound and carry no reusable credentials. **It returns run outputs only: uploaded input data is never downloadable** (§5.6), and that is a property of which keys the tool will sign, not a filter applied to a listing. The same rule binds `read_file` and `list_s3_files`, which today walk the project prefix and would otherwise be the way around it.
 
 Cross-cutting: **no tool takes a project, conversation, or owner identifier, and none is transmitted on the wire** — scope is derived from the verified subject and nothing else (§2.3.1). All tools are otherwise typed with the same Zod contracts as their dashboard sources; read tools declare read-only/idempotent annotations; `start_embedding_run` is the single billable, non-idempotent operation. Ownership failures and nonexistence are indistinguishable. Account-transparency tools (`get_balance`, `get_usage`) are a small, recommended addition to the allowlist.
 
@@ -615,12 +653,14 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 ### Input, output, and network controls
 
 - Treat all MCP arguments as untrusted; keep the scaffold's controls in any adapter: bounded lengths and limits, HTTPS-only upstreams, redirects disabled on credential-bearing requests, response-size caps, sanitized errors.
-- Presigned URLs: short-lived, single-purpose, project-scoped prefixes.
+- Presigned URLs: short-lived, single-purpose, project-scoped prefixes, and **signed for output keys only** — the input/output distinction of §5.6 is enforced where the URL is minted, so no listing or path argument can reach an uploaded dataset.
 
 ### Privacy and observability
 
 - Publish privacy, retention, deletion, support, and terms pages before distribution. **No customer-facing support or ticketing channel exists today** — a consumer user has nowhere to report a problem, which makes §6's "contact support" a dead end. One must exist before launch; a dedicated public issue tracker is the cheapest credible option and needs a decision (§14).
 - Account lifecycle already includes a soft delete after 90 days of inactivity (the existing user-activity tracker). The retention policy must state what that boundary does to the user's project contents, artifacts, and any unspent credit — unspent paid credit in particular is a refund question, not just a data question.
+- **Uploaded inputs are retained indefinitely and the user cannot download them** (§5.6). That combination raises the bar on the policy rather than lowering it: we hold data the user deliberately has no way to retrieve, so asking us to delete it is their only control over it, and the policy has to say so plainly and name the three paths that end retention — account deletion, erasure on request, and the inactivity boundary above. Retention with no stated end is the failure mode here, not a download tool.
+- **Deleting data must not erase the charge for having processed it.** The `CreditLedger` is append-only and lives apart from the artifacts, so a billing record outlives the data it refers to — deliberately, since it is the audit trail. "We deleted everything" therefore has to be worded so that a later, correct historical charge is not a contradiction.
 - Redact tokens and personal data from logs; correlation IDs over raw payloads (the dashboard middleware's structured access log already sanitizes inputs).
 - Per-user usage, ledger, and run history are visible only to that user; no cross-user aggregates in any user-facing response.
 - Account deletion propagates: Cognito user, project contents, indexes, caches, ledger (per retention policy — policy itself is a pre-launch work item).
@@ -640,7 +680,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 ### Profile C: individual-user tenant (the target)
 
 - New `modules/tenant` instantiation with `allow_self_signup`, the public MCP app client, and the custom scope (§4.1), trimmed to dashboard + Airflow + MLflow (§2.2).
-- Runs the `b2c` edition (§2.5): authentication, self-service sign-up, and checkout only, plus the MCP tool surface. The platform UI is unreachable, enforced at the API and route layers rather than by hiding navigation.
+- Runs the `b2c` edition (§2.5): the four account screens only — sign-up, sign-in, top-up, balance — plus the MCP tool surface. The rest of the platform UI is unreachable, enforced at the API and route layers rather than by hiding navigation.
 - The MCP OAuth proxy reachable in-tenant (`enable_helical_mcp`, `helical_mcp_public_url`), serving RFC 9728 metadata and the `401` challenge, with the dashboard's MCP endpoint behind it.
 - Auto-provisioned single project per user; no collaboration.
 - Per-token metering, prepaid credits (recommended), external top-up with verified webhooks.
@@ -665,9 +705,9 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 8. **Billing**: add the price table (per-model coefficients derived from measured GPU-hours), token ledger (paid + free-grant credit classes, consumption ordering, expiry), row-locked balance check, and estimator service; compute tokens deterministically from dataset shape and the model coefficient — no dags-repo change is required — then debit at launch and refund terminal failures through idempotent ledger writes; add `get_balance` / `get_usage`.
 9. **MCP endpoint** (in the dashboard): a Streamable HTTP route speaking `initialize` / `tools/list` / `tools/call`, with descriptors generated from the same Zod schemas as the REST routes rather than written twice; RFC 9728 metadata and the OAuth challenge are served by the proxy in front of it (§4.3), not here; **stateless** — issue no `Mcp-Session-Id`, since the dashboard runs multiple replicas with no session affinity.
 10. **Plugin artifacts**: point `.mcp.json` at the dashboard's MCP endpoint for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
-11. **Payments**: select the processor (Stripe is the seed, §5.3) and integrate it behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified idempotent webhooks, and the Helical-owned top-up page. The selection gates the integration but not the ledger, which is processor-agnostic by construction.
+11. **Payments**: integrate Stripe (decided, §5.3) behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified webhooks made idempotent on `event.id`, and the Helical-owned top-up page. The ledger stays processor-agnostic by construction.
 12. **Implement the compute decision from Gate 0** (§5.4): under Variant A, fix the spot-versus-on-demand posture and its retry policy, pin the image the token coefficients were measured against, and decide whether Nebius stays as the overflow route; under Variant B, build the dispatch, per-run scoped credentials, and artifact registration that replace the DAG's. The *decision* belongs at Gate 0; only the implementation belongs here.
-13. **Launch readiness**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today.
+13. **Launch readiness and measurement**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today — and emit the adoption/retention/spend events of §5.7 from the transactions that already own the facts. The events have to exist *before* distribution, not after: the funnel steps that matter most are the ones a user never reaches, and those leave no trace to reconstruct later.
 14. **Test and dogfood** per §12, then distribute.
 15. **Extend the surface** per the §7.0 roadmap: repeat steps 7–9 for fine-tuning, then perturbation analysis — new tools and price-table entries only, no new authorization or billing semantics.
 
@@ -832,7 +872,7 @@ Target architecture:
 
 Still open:
 
-- **Payment processor** — intentionally open; the design is seeded with Stripe behind a thin provider interface (§5.3).
+- **Per-user storage cap, and whether one exists at all** (§5.6). Inputs are retained indefinitely and are not downloadable, so storage accrues monotonically and nothing meters it. `ProjectTypeQuota` is where an allowance would live, but adding one means giving **every existing tier** a value, since a missing quota row fails closed rather than reading as unlimited. Deciding "no cap for now" is a legitimate answer; leaving it undecided means the answer is "no cap" without anyone having chosen it.
 - Whether to enable the free monthly credit at launch, and its size/eligibility (the ledger supports it either way, §5.1).
 - **Compute variant: our Kubernetes or managed serverless** (§5.5) — the highest-order open decision, and a **gate on the infrastructure work** rather than a later step, because it determines whether §2.4's "extend the platform" conclusion still holds, what the tenant contains, whether Airflow exists at all, and how the second isolation gate is implemented. Everything above the dispatch boundary — the MCP tool contract, token metering, identity, the edition manifest, the plugin artifacts — is invariant and can be built while it is open.
 - **GPU access strategy within Variant A** (§5.4) — the decision with the most direct effect on margin. Launch on AWS is the recommendation, but three sub-decisions are genuinely open and one of them costs money by default: (a) **spot versus on-demand for the consumer namespace** — the default is spot, the embedding DAG configures no retries, and a spot interruption becomes a refunded failure we still pay for; (b) whether to keep the already-integrated **Nebius** path as the overflow route, accepting its image-tag skew and `/datasets`-prefixed artifact paths; (c) whether **Modal** becomes the escape hatch when consumer load contends with client capacity. Baseten is a partial fit for a different product shape, and Runware was evaluated and ruled out (it cannot run our container).
@@ -840,6 +880,6 @@ Still open:
 - **Customer-facing support channel** — none exists; needed before distribution (§9).
 - **Whether local execution (§7.2) is a funnel or a leak.** The argument for it is that a user with an idle GPU was never going to pay per token for a small job, that local is the only correct answer when data cannot leave the machine, and that it reaches the ten reference prompts whose models the platform does not host. The argument against is that it makes the free path a first-class part of a paid product. Worth deciding deliberately rather than by default.
 - Trimmed `modules/tenant` variant for the consumer tier: dashboard + Airflow + MLflow only, dropping JupyterHub, Coder, and Redis (§2.2 — scope now settled, the module work is not).
-- Retention and deletion policy text, including the 90-day inactivity boundary and unspent-credit treatment.
+- Retention and deletion policy text, including the 90-day inactivity boundary, unspent-credit treatment, and the indefinitely-retained, non-downloadable inputs of §5.6.
 - Whether the 2026-07-29 decision to let users see that other indications exist applies to the consumer tenant. This design assumes it does **not**: a consumer user sees no project or indication concept at all (§2.2). If it does apply, the invisible-project premise and the isolation acceptance criteria need revisiting.
 - The MCP endpoint's protocol layer — session posture, error mapping, and how `tools/list` is generated from the route registry (scoped in §11.9).
