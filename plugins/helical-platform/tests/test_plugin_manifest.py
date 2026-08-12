@@ -54,10 +54,53 @@ ALLOWED_HOSTS = {
 # A claim this cannot resolve (prose like "the tools", or a hyphenated
 # "twenty-one") is skipped rather than guessed at.
 NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9,
     "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
     "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
     "nineteen": 19, "twenty": 20, "thirty": 30,
 }
+
+# DESIGN 2.5 defines the b2c edition as a fixed set of account screens. That
+# count is load-bearing well beyond 2.5 — the porting rules turn on it, the
+# approval-queue argument turns on it, and the skill instructs the agent with
+# it — so it is restated in nine places across four documents, in two different
+# renderings. Nine copies of a number is exactly the shape that goes stale.
+B2C_SCREEN_DOCS = (
+    REPO / "DESIGN.md",
+    REPO / "PLAN.md",
+    REPO / "README.md",
+    SKILLS_DIR / "compute-embeddings" / "SKILL.md",
+)
+
+# The definition itself: "...is exactly four screens...: **sign-up, sign-in, ...**"
+CANONICAL_B2C_SCREENS = re.compile(
+    r"`b2c` edition is exactly (?P<count>[a-z]+) screens\b.*?:\s*\*\*(?P<members>[^*]+)\*\*",
+    re.S,
+)
+
+# A restatement that also enumerates: "four account screens — a, b, c, d (..."
+# The separator is required, so a bare cross-reference ("the four account
+# screens (2.5)") is counted but not required to list them.
+B2C_SCREEN_CLAIM = re.compile(r"\b(?P<count>[a-z]+)\s+(?:account\s+)?screens\b")
+# NB: `.match(text, pos)` already anchors at pos — do not add \A, which anchors
+# to the start of the whole string and silently never matches.
+B2C_SCREEN_LISTING = re.compile(r"\s*(?:only\s*)?[—:–-]\s*(?P<members>.+?)(?=\s+[—(]|[;.]|\Z)", re.S)
+
+
+def screen_set(listing):
+    """'sign up, sign-in, top-up, and check balance' -> {'sign up', 'sign in', ...}
+
+    Normalises the two renderings in use: hyphenated ('sign-up') in the design
+    documents, spaced ('sign up') in the skill, which addresses an agent.
+    """
+    names = set()
+    for part in re.split(r",|\band\b", listing):
+        name = re.sub(r"\s+", " ", part.replace("-", " ")).strip().lower()
+        name = re.sub(r"^(?:check|consult) ", "", name)
+        if name:
+            names.add(name)
+    return frozenset(names)
 
 _spec = importlib.util.spec_from_file_location(
     "helical_plugin_mcp_manifest_tests", PLUGIN / "mcp" / "server.py"
@@ -321,6 +364,69 @@ class DocumentationDriftTests(unittest.TestCase):
             self._assert_count_claims(REPO / "DESIGN.md"),
             0,
             "DESIGN.md states no tool count this test could check — it passed vacuously",
+        )
+
+
+class B2CScreenCountTests(unittest.TestCase):
+    """DESIGN 2.5's screen list, checked against its nine restatements."""
+
+    def setUp(self):
+        design = (REPO / "DESIGN.md").read_text()
+        match = CANONICAL_B2C_SCREENS.search(design)
+        self.assertIsNotNone(
+            match,
+            "DESIGN 2.5 no longer states 'the `b2c` edition is exactly N screens: "
+            "**...**' — this whole test class is anchored on that sentence",
+        )
+        self.stated = NUMBER_WORDS.get(match.group("count").lower())
+        self.assertIsNotNone(
+            self.stated, f"unrecognised number word in DESIGN 2.5: {match.group('count')!r}"
+        )
+        self.members = screen_set(match.group("members"))
+
+    def test_the_definition_lists_as_many_screens_as_it_claims(self):
+        """The one check the restatements cannot make: is 2.5 self-consistent?
+
+        Renumbering every site together is the plausible way this drifts, and it
+        leaves each site agreeing with all the others. Only the definition's own
+        count-versus-list disagreement catches that.
+        """
+        self.assertEqual(
+            self.stated,
+            len(self.members),
+            f"DESIGN 2.5 claims {self.stated} screens but lists {len(self.members)}: "
+            f"{sorted(self.members)}",
+        )
+
+    def test_every_restatement_agrees_with_the_definition(self):
+        checked = 0
+        for path in B2C_SCREEN_DOCS:
+            text = path.read_text()
+            for claim in B2C_SCREEN_CLAIM.finditer(text):
+                stated = NUMBER_WORDS.get(claim.group("count").lower())
+                if stated is None:
+                    continue  # "the screens", "these screens" — prose, not a count
+                checked += 1
+                with self.subTest(file=path.name, claim=claim.group(0)):
+                    self.assertEqual(
+                        stated,
+                        self.stated,
+                        f"{path.name} says '{claim.group(0)}'; DESIGN 2.5 defines "
+                        f"{self.stated}",
+                    )
+                listing = B2C_SCREEN_LISTING.match(text, claim.end())
+                if listing is None:
+                    continue  # a cross-reference, not an enumeration
+                with self.subTest(file=path.name, listing=listing.group("members")):
+                    self.assertEqual(
+                        screen_set(listing.group("members")),
+                        self.members,
+                        f"{path.name} enumerates the screens differently from DESIGN 2.5",
+                    )
+        self.assertGreater(
+            checked,
+            1,
+            "no document restates the screen count — this test passed vacuously",
         )
 
 

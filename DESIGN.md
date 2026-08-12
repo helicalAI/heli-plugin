@@ -139,7 +139,7 @@ Two further notes. The token-billing decision (§5.1) removes one of option B's 
 
 ### 2.5 Parametrising what each edition exposes
 
-The two products draw almost disjoint surfaces from one codebase. The B2C tenant needs authentication, self-service sign-up, and checkout — and, separately, the MCP tool surface. The B2B tenants need the full platform *except* sign-up and checkout, with a different auth flow. Deployment is one tenant per instance, so the variation is per-deployment, not per-request or per-user.
+The two products draw almost disjoint surfaces from one codebase. The B2C tenant needs four account screens — sign-up, sign-in, top-up, balance — and, separately, the MCP tool surface. The B2B tenants need the full platform *except* sign-up and checkout, with a different auth flow. Deployment is one tenant per instance, so the variation is per-deployment, not per-request or per-user.
 
 **Starting point: there is no mechanism to extend.** No feature-flag system exists (no library, no table, no partial attempt), and there is no typed environment validation — `src/env.ts` is a six-line file of hard-coded docs credentials, not an env module. What exists today is eight ad-hoc `NEXT_PUBLIC_NAMESPACE` comparisons scattered across seven files, including the same tenant list `["dev","local-dev","pfizer","novartis","mt"]` duplicated between client (`PlatformContext.tsx:154`) and server (`airflow-services.ts:185`) with no shared constant — a divergence bug waiting to happen. Two idioms are already in conflict: exact-match `.includes(ns)` against an array, and substring `ns.includes("dev")`, which would also match a tenant named `devon`.
 
@@ -316,7 +316,15 @@ Common to all of them:
 
 Checkout/top-up stays on the merchant domain. **The processor is Stripe** (decided; the seed became the choice): Stripe Checkout sessions and signed webhooks (`checkout.session.completed` crediting the ledger), kept behind a thin provider interface (create-top-up-session, verify-webhook, refund) so the ledger and the tools stay processor-agnostic. The interface survives the decision because it is what keeps the ledger free of Stripe vocabulary, not because a swap is expected.
 
-**The webhook's idempotency key is the event id, not the session id.** One Checkout session emits several events over its life (`checkout.session.completed`, then `async_payment_succeeded` or `async_payment_failed` for delayed methods), and Stripe redelivers events after a non-2xx or a timeout. Keying the credit on `session.id` therefore either drops a legitimate second event or double-credits a redelivery, depending on which way the check is written; keying on `event.id` is exactly once per delivered event. `CreditLedger.providerRef` (unique, §5.1) is where that key is enforced, at the database rather than in the handler.
+**Two different uniqueness questions, and they need two different keys.** Stripe redelivers an event after a non-2xx or a timeout, so *delivery* must be deduped on `event.id` — that is what `CreditLedger.providerRef` (unique, §5.1) enforces, at the database rather than in the handler. But one Checkout session emits several distinct events over its life, each with its own `event.id`, so `providerRef` alone does not answer "has this **payment** already been credited". Keying on `session.id` instead is not the fix: it fails the other way, swallowing a legitimate later event for the same session.
+
+So the crediting condition has to be stated, not left to the key:
+
+- **Credit on `checkout.session.completed` only when `payment_status === "paid"`.** For delayed payment methods that field is `"unpaid"` at `completed` — crediting there hands out credit before funds settle.
+- **Credit on `checkout.session.async_payment_succeeded`**, which is where a delayed method actually pays. It is a second `event.id` for the same session, so it must be allowed through delivery dedupe and gated on the payment instead.
+- **`async_payment_failed` credits nothing** and should be recorded rather than dropped, so a user whose top-up failed has an explanation.
+
+Payment-level uniqueness is the `payment_intent` id; `event.id` is delivery-level. A design that stores only one of the two is either double-crediting or losing a payment.
 
 1. A billable call with insufficient balance returns `insufficient_balance` with a short-lived, subject-bound top-up URL (no credentials embedded).
 2. The provider's verified, idempotent webhook credits the ledger (paid credit class).
@@ -653,7 +661,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 ### Input, output, and network controls
 
 - Treat all MCP arguments as untrusted; keep the scaffold's controls in any adapter: bounded lengths and limits, HTTPS-only upstreams, redirects disabled on credential-bearing requests, response-size caps, sanitized errors.
-- Presigned URLs: short-lived, single-purpose, project-scoped prefixes, and **signed for output keys only** — the input/output distinction of §5.6 is enforced where the URL is minted, so no listing or path argument can reach an uploaded dataset.
+- Presigned URLs: short-lived, single-purpose, project-scoped prefixes. The two directions get different rules, and conflating them breaks upload: a presigned **GET** is signed for output keys only, so the input/output distinction of §5.6 is enforced where the URL is minted and no listing or path argument can reach an uploaded dataset; a presigned **PUT** necessarily targets an input key (§7.1b) and is constrained instead by being write-only, under the caller's upload prefix, extension-allowlisted and size-capped.
 
 ### Privacy and observability
 
@@ -695,7 +703,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 1. **Extract the shared DAG-contract package** (§2.4): `constants/paths.ts`, `lib/models/classify.ts`, the DAG-contract half of `airflow-constants.ts`, and `embeddingsApiPayloadSchema` — ~450 lines of plain TypeScript, consumed by the dashboard and by anything that later triggers these DAGs.
 2. **Introduce the tenant capability manifest** (§2.5): `src/config/tenants.ts` keyed by `NEXT_PUBLIC_NAMESPACE`, absorbing the eight existing ad-hoc namespace checks; fail at boot on an unknown namespace.
 3. **Build the edition enforcement** (§2.5): the root-level tRPC path allowlist, `featureProcedure`, the middleware page-prefix gate, the data-driven nav refactor, and the three CI checks. Cross-indication porting and the Jupyter/Coder surface become capabilities absent from the B2C edition rather than bespoke conditionals.
-4. **Add the B2C edition surface** (§2.5): the `(b2c)` route group for authentication, sign-up, and checkout; `hideSignUp` wiring; and the scheduled app-versus-Cognito reconciliation check.
+4. **Add the B2C edition surface** (§2.5): the `(b2c)` route group for the four account screens — sign-up, sign-in, top-up, balance; `hideSignUp` wiring; and the scheduled app-versus-Cognito reconciliation check. The balance page reads the same aggregation as the `get_balance` tool rather than computing it a second time.
 
 **Product work:**
 
@@ -872,7 +880,7 @@ Target architecture:
 
 Still open:
 
-- **Per-user storage cap, and whether one exists at all** (§5.6). Inputs are retained indefinitely and are not downloadable, so storage accrues monotonically and nothing meters it. `ProjectTypeQuota` is where an allowance would live, but adding one means giving **every existing tier** a value, since a missing quota row fails closed rather than reading as unlimited. Deciding "no cap for now" is a legitimate answer; leaving it undecided means the answer is "no cap" without anyone having chosen it.
+- **Per-user storage cap, and whether one exists at all** (§5.6). Inputs are retained indefinitely and are not downloadable, so storage accrues monotonically and nothing meters it. `ProjectTypeQuota` is where an allowance would live, and the hazard there is specific: that table's convention is that **`0` forbids rather than meaning unlimited** (`ft_max_cells = 0` forbids fine-tuning), and there is no "unset" state at all. A storage column added with the customary `@default(0)` therefore forbids every upload on every existing B2B tier the moment it lands, unless the same migration gives each tier a real figure. Deciding "no cap for now" is a legitimate answer; leaving it undecided means the answer is "no cap" without anyone having chosen it.
 - Whether to enable the free monthly credit at launch, and its size/eligibility (the ledger supports it either way, §5.1).
 - **Compute variant: our Kubernetes or managed serverless** (§5.5) — the highest-order open decision, and a **gate on the infrastructure work** rather than a later step, because it determines whether §2.4's "extend the platform" conclusion still holds, what the tenant contains, whether Airflow exists at all, and how the second isolation gate is implemented. Everything above the dispatch boundary — the MCP tool contract, token metering, identity, the edition manifest, the plugin artifacts — is invariant and can be built while it is open.
 - **GPU access strategy within Variant A** (§5.4) — the decision with the most direct effect on margin. Launch on AWS is the recommendation, but three sub-decisions are genuinely open and one of them costs money by default: (a) **spot versus on-demand for the consumer namespace** — the default is spot, the embedding DAG configures no retries, and a spot interruption becomes a refunded failure we still pay for; (b) whether to keep the already-integrated **Nebius** path as the overflow route, accepting its image-tag skew and `/datasets`-prefixed artifact paths; (c) whether **Modal** becomes the escape hatch when consumer load contends with client capacity. Baseten is a partial fit for a different product shape, and Runware was evaluated and ruled out (it cannot run our container).
