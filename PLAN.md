@@ -11,7 +11,8 @@ Decisions (from DESIGN.md, confirmed by the product owner):
 - Full program, phased; each milestone independently landable and flag-gated.
 - **Token accounting is deterministic**: each row/cell costs a fixed number of tokens per model (data-prep + tokenizer dependent). Total = per-row factor × row count (× epochs for fine-tuning, × genes-to-perturb for perturbation, later). Estimate ≡ actual, so **billing needs no dags-repo change** and the debit can happen at launch.
 - Prepaid credits; **Stripe** top-up behind a provider interface (#1838, decided); free monthly grant supported in schema, enablement is a launch parameter.
-- **Downloads return run outputs only, and uploaded inputs are never deleted** (#1972, DESIGN §5.6). Storage is therefore a monotonic, unpriced cost line that the token ledger cannot see, and a per-user cap is an open decision rather than a detail.
+- **Two metering systems coexist, and they treat a deleted run oppositely** (DESIGN §5.6). ISP credits are *derived* from `run_meta`, so a delete erased the charge — hence #1927/#1978's soft delete. The money ledger is *recorded* in its own append-only table, so it does not need that protection and must not be built assuming it. They overlap only at `dag_id = 'perturbation'`, i.e. roadmap stage 3.
+- **Downloads return run outputs only, and uploaded inputs are never deleted** (#1972, DESIGN §5.7). Storage is therefore a monotonic, unpriced cost line that the token ledger cannot see, and a per-user cap is an open decision rather than a detail.
 - Confirmation is prompt-level (skill instructs the agent); no server-side `PendingConfirmation` on the MCP path. Mitigations: balance ceiling, per-user concurrent-run cap, estimate echoed at kickoff.
 
 Load-bearing repo facts (verified 2026-07-27):
@@ -263,7 +264,7 @@ Per DESIGN §5.4. Not an ops detail: per-token pricing means we absorb all compu
 
 ## Milestone 5b — Metrics: adoption, retention, spend (#1971)
 
-The ledger records what we charge, which is not the same as whether the product works. A user who signs up, lists models and never starts a run writes no ledger row at all — and that is the cohort a funnel exists to see. So the events are emitted server-side from the transactions that already own the facts (no client-reported steps; the MCP surface has no browser to carry an analytics SDK), and they land before distribution rather than after (DESIGN §5.7).
+The ledger records what we charge, which is not the same as whether the product works. A user who signs up, lists models and never starts a run writes no ledger row at all — and that is the cohort a funnel exists to see. So the events are emitted server-side from the transactions that already own the facts (no client-reported steps; the MCP surface has no browser to carry an analytics SDK), and they land before distribution rather than after (DESIGN §5.8).
 
 - **Adoption** — signup, first authenticated MCP call, first estimate, first started run, with the drop-off between each step.
 - **Retention** — weekly/monthly returning cohorts, runs per active user, interval between runs. `User.lastActiveAt` cannot serve as the series: it is a single overwritten column and the write is throttled to at most once per 24 h (`ACTIVITY_STALE_MS` in `src/lib/auth-db.ts`), so it answers dormancy for the 90-day soft delete and nothing finer.

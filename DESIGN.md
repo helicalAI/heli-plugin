@@ -416,7 +416,26 @@ Public documentation does not settle these, and each one changes the answer:
 
 This decision therefore cannot sit at step 12 of §11, after the tenant has been built. It determines whether steps 5–9 are the right work at all. **It is promoted to a gate before the infrastructure work begins.** The recommendation in §5.4 — launch on AWS — is unchanged, and choosing it deliberately and early is exactly the point; what is not acceptable is discovering at step 12 that the answer was Modal and that the tenant, the Airflow deployment, and the fuse-mount assumptions were all built for the other variant.
 
-### 5.6 Storage: the cost line tokens do not track
+### 5.6 Two metering systems, and what a deleted run does to each
+
+The platform already meters — ISP credits for enterprise — and that system is being hardened at the same time as this one (#1927/#1978, #1820). They are not variants of one design, and the difference is exactly where a deleted run lands:
+
+| | ISP credits (enterprise, exists) | Money ledger (B2C, §5.1) |
+|---|---|---|
+| Where the charge lives | **Derived**: a SQL query over `run_meta` | **Recorded**: `credit_ledger` rows, append-only |
+| Effect of deleting the run | Erases the charge — and `runs.delete` is open to the run's *owner*, so it was self-service | None. The ledger is a separate table |
+| Therefore | `runs.delete` becomes a **soft** delete; the credit query deliberately keeps counting deleted runs | Deletion is a provenance question, not a correctness one |
+| Scope | `dag_id = 'perturbation'` only | Every billable operation on the B2C surface |
+
+Three consequences for this design, none of them optional:
+
+- **Do not assume soft delete protects the money ledger.** It does not need to, and relying on it would be relying on the wrong mechanism. The ledger's protection is that a debit row is self-describing and anchored on an immutable `run_ref` rather than on the `run_meta_id` foreign key, so it survives the run being soft-deleted, hard-deleted, or erased on request (§9).
+- **Every B2C read must exclude soft-deleted runs, and that is hand-written per query.** Prisma 7 removed `$use`, and a `$extends` hook does not fire for a relation read or a relation filter, so the guarantee lives in two chokepoints — `buildRunsWhere` and `projectScope` — plus vigilance everywhere else. This is a concrete argument for §2.3's rule that a second surface *reuses* the query rather than restating it: the run tools inherit the filter because they call `listRuns`, while a hand-rolled `artifactMeta.findFirst` with a `runMeta` relation filter silently does not.
+- **The two systems collide at roadmap stage 3, not before.** ISP credit usage counts only `dag_id = 'perturbation'`, so embeddings (stage 1) and fine-tuning (stage 2) meter in money and nothing else. Perturbation would be metered twice — once in credits against the indication's allowance, once in money against the user's balance — and that is the metering decision §7.0 records as gating ISP for B2C, now with a precise boundary rather than a general worry.
+
+One asymmetry worth stating because it reads as inconsistent otherwise: `runs.delete` (the customer path) becomes soft, while `runs.deleteOne`/`deleteAll` stay hard as the deliberate staff purge. The ledger's `ON DELETE RESTRICT` therefore fires only on that purge — deliberately, since a tool that wipes runs should not quietly take money records with it (§5.1).
+
+### 5.7 Storage: the cost line tokens do not track
 
 Two decisions taken together create a cost that the metering model above cannot see.
 
@@ -435,10 +454,10 @@ Nothing in the platform currently bounds or even measures it, verified against `
 So three things follow, and they are work items rather than observations:
 
 1. **Record the object's byte size at registration** (§7.1b). It is free at upload time, when the length is already known, and reconstructing it later requires walking S3 per user.
-2. **Report storage beside compute** (§5.7). A user who uploads 50 GB, runs one small embedding and never returns is revenue-positive on compute and negative overall — and a GPU-hours-only view reports them as healthy.
+2. **Report storage beside compute** (§5.8). A user who uploads 50 GB, runs one small embedding and never returns is revenue-positive on compute and negative overall — and a GPU-hours-only view reports them as healthy.
 3. **A per-user storage cap is the natural bound, and it is an open decision** (§14), not a detail. `ProjectTypeQuota` is where allowances live, but adding a column there means every existing tier needs a value: `docs/COST_CONTROL.md` refuses a tier with no quota row rather than treating a missing row as unlimited.
 
-### 5.7 What we measure
+### 5.8 What we measure
 
 Metering answers "what do we charge". It does not answer "is this working", and the three questions the product actually turns on — adoption, retention, spend — cannot be reconstructed after the fact from a ledger that only records billable events. A user who signs up, browses models and never starts a run leaves no ledger row at all, and that user is the single most important cohort to a funnel.
 
@@ -446,7 +465,7 @@ The measurement therefore has to be designed alongside the ledger, from events t
 
 - **Adoption** — signups, first authenticated MCP call, first estimate, first started run, and the drop-off between each. The gap from *installed the plugin* to *started a run* is the funnel; each step must be an event, because the interesting cohorts are the ones that stop.
 - **Retention** — returning users by week and month cohort, runs per active user, and the interval between consecutive runs. `touchUserActivity` already stamps `User.lastActiveAt`, but it cannot serve as the series: it is a single overwritten column, and the write is deliberately throttled to at most once per 24 hours, so it answers "is this account dormant" for the 90-day soft delete and nothing finer.
-- **Spend** — top-ups, tokens consumed by model, free-grant versus paid consumption, refunds, and balance left unspent. The ledger holds all of this; what is missing is the aggregation and the per-user cost side to set against it (§5.6, §5.4).
+- **Spend** — top-ups, tokens consumed by model, free-grant versus paid consumption, refunds, and balance left unspent. The ledger holds all of this; what is missing is the aggregation and the per-user cost side to set against it (§5.7, §5.4).
 
 Two constraints on how this is built. It is **per-user data under §9**: aggregates are internal, and no user-facing response exposes another user's activity or any cross-user total. And the events must be emitted **server-side from the same transactions that already own the facts** — a client-reported funnel step from an agent host we do not control is not evidence, and the MCP surface has no browser to carry a front-end analytics SDK in the first place.
 
@@ -525,7 +544,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### b. Datasets
 
 - **`create_dataset_upload`** — returns a short-lived, project-scoped presigned S3 PUT URL for a new dataset file (`.h5ad` first). The MCP transport never carries file bytes.
-- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services — the procedure bodies are inline today and need lifting into a shared service) and returns the dataset record with row/gene counts. It must also **persist the object's byte size**, which `DataScMeta` does not record today: the length is already known at upload, the file is retained indefinitely (§5.6), and without the column any per-user storage figure or cap requires walking S3.
+- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services — the procedure bodies are inline today and need lifting into a shared service) and returns the dataset record with row/gene counts. It must also **persist the object's byte size**, which `DataScMeta` does not record today: the length is already known at upload, the file is retained indefinitely (§5.7), and without the column any per-user storage figure or cap requires walking S3.
 - **`list_datasets`** / **`get_dataset`** — port of the data catalog routes (`agentcore-mcp/data/`), including columns/obs metadata needed for estimation.
 
 ### c. Embedding runs
@@ -537,7 +556,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### d. Results
 
 - **`list_results`** / **`search_results`** — completed runs with their artifacts, filterable by model, dataset, date, and free-text label.
-- **`download_result`** — short-lived presigned GET URL for a named artifact (embedding matrices, UMAPs). URLs are subject-bound and carry no reusable credentials. **It returns run outputs only: uploaded input data is never downloadable** (§5.6), and that is a property of which keys the tool will sign, not a filter applied to a listing. The same rule binds `read_file` and `list_s3_files`, which today walk the project prefix and would otherwise be the way around it.
+- **`download_result`** — short-lived presigned GET URL for a named artifact (embedding matrices, UMAPs). URLs are subject-bound and carry no reusable credentials. **It returns run outputs only: uploaded input data is never downloadable** (§5.7), and that is a property of which keys the tool will sign, not a filter applied to a listing. The same rule binds `read_file` and `list_s3_files`, which today walk the project prefix and would otherwise be the way around it.
 
 Cross-cutting: **no tool takes a project, conversation, or owner identifier, and none is transmitted on the wire** — scope is derived from the verified subject and nothing else (§2.3.1). All tools are otherwise typed with the same Zod contracts as their dashboard sources; read tools declare read-only/idempotent annotations; `start_embedding_run` is the single billable, non-idempotent operation. Ownership failures and nonexistence are indistinguishable. Account-transparency tools (`get_balance`, `get_usage`) are a small, recommended addition to the allowlist.
 
@@ -674,13 +693,13 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 ### Input, output, and network controls
 
 - Treat all MCP arguments as untrusted; keep the scaffold's controls in any adapter: bounded lengths and limits, HTTPS-only upstreams, redirects disabled on credential-bearing requests, response-size caps, sanitized errors.
-- Presigned URLs: short-lived, single-purpose, project-scoped prefixes. The two directions get different rules, and conflating them breaks upload: a presigned **GET** is signed for output keys only, so the input/output distinction of §5.6 is enforced where the URL is minted and no listing or path argument can reach an uploaded dataset; a presigned **PUT** necessarily targets an input key (§7.1b) and is constrained instead by being write-only, under the caller's upload prefix, extension-allowlisted and size-capped.
+- Presigned URLs: short-lived, single-purpose, project-scoped prefixes. The two directions get different rules, and conflating them breaks upload: a presigned **GET** is signed for output keys only, so the input/output distinction of §5.7 is enforced where the URL is minted and no listing or path argument can reach an uploaded dataset; a presigned **PUT** necessarily targets an input key (§7.1b) and is constrained instead by being write-only, under the caller's upload prefix, extension-allowlisted and size-capped.
 
 ### Privacy and observability
 
 - Publish privacy, retention, deletion, support, and terms pages before distribution. **No customer-facing support or ticketing channel exists today** — a consumer user has nowhere to report a problem, which makes §6's "contact support" a dead end. One must exist before launch; a dedicated public issue tracker is the cheapest credible option and needs a decision (§14).
 - Account lifecycle already includes a soft delete after 90 days of inactivity (the existing user-activity tracker). The retention policy must state what that boundary does to the user's project contents, artifacts, and any unspent credit — unspent paid credit in particular is a refund question, not just a data question.
-- **Uploaded inputs are retained indefinitely and the user cannot download them** (§5.6). That combination raises the bar on the policy rather than lowering it: we hold data the user deliberately has no way to retrieve, so asking us to delete it is their only control over it, and the policy has to say so plainly and name the three paths that end retention — account deletion, erasure on request, and the inactivity boundary above. Retention with no stated end is the failure mode here, not a download tool.
+- **Uploaded inputs are retained indefinitely and the user cannot download them** (§5.7). That combination raises the bar on the policy rather than lowering it: we hold data the user deliberately has no way to retrieve, so asking us to delete it is their only control over it, and the policy has to say so plainly and name the three paths that end retention — account deletion, erasure on request, and the inactivity boundary above. Retention with no stated end is the failure mode here, not a download tool.
 - **Deleting data must not erase the charge for having processed it.** The `CreditLedger` is append-only and lives apart from the artifacts, so a billing record outlives the data it refers to — deliberately, since it is the audit trail. "We deleted everything" therefore has to be worded so that a later, correct historical charge is not a contradiction.
 - Redact tokens and personal data from logs; correlation IDs over raw payloads (the dashboard middleware's structured access log already sanitizes inputs).
 - Per-user usage, ledger, and run history are visible only to that user; no cross-user aggregates in any user-facing response.
@@ -728,7 +747,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 10. **Plugin artifacts**: point `.mcp.json` at the dashboard's MCP endpoint for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
 11. **Payments**: integrate Stripe (decided, §5.3) behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified webhooks made idempotent on `event.id`, and the Helical-owned top-up page. The ledger stays processor-agnostic by construction.
 12. **Implement the compute decision from Gate 0** (§5.4): under Variant A, fix the spot-versus-on-demand posture and its retry policy, pin the image the token coefficients were measured against, and decide whether Nebius stays as the overflow route; under Variant B, build the dispatch, per-run scoped credentials, and artifact registration that replace the DAG's. The *decision* belongs at Gate 0; only the implementation belongs here.
-13. **Launch readiness and measurement**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today — and emit the adoption/retention/spend events of §5.7 from the transactions that already own the facts. The events have to exist *before* distribution, not after: the funnel steps that matter most are the ones a user never reaches, and those leave no trace to reconstruct later.
+13. **Launch readiness and measurement**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today — and emit the adoption/retention/spend events of §5.8 from the transactions that already own the facts. The events have to exist *before* distribution, not after: the funnel steps that matter most are the ones a user never reaches, and those leave no trace to reconstruct later.
 14. **Test and dogfood** per §12, then distribute.
 15. **Extend the surface** per the §7.0 roadmap: repeat steps 7–9 for fine-tuning, then perturbation analysis — new tools and price-table entries only, no new authorization or billing semantics.
 
@@ -893,7 +912,7 @@ Target architecture:
 
 Still open:
 
-- **Per-user storage cap, and whether one exists at all** (§5.6). Inputs are retained indefinitely and are not downloadable, so storage accrues monotonically and nothing meters it. `ProjectTypeQuota` is where an allowance would live, and the hazard there is specific: that table's convention is that **`0` forbids rather than meaning unlimited** (`ft_max_cells = 0` forbids fine-tuning), and there is no "unset" state at all. A storage column added with the customary `@default(0)` therefore forbids every upload on every existing B2B tier the moment it lands, unless the same migration gives each tier a real figure. Deciding "no cap for now" is a legitimate answer; leaving it undecided means the answer is "no cap" without anyone having chosen it.
+- **Per-user storage cap, and whether one exists at all** (§5.7). Inputs are retained indefinitely and are not downloadable, so storage accrues monotonically and nothing meters it. `ProjectTypeQuota` is where an allowance would live, and the hazard there is specific: that table's convention is that **`0` forbids rather than meaning unlimited** (`ft_max_cells = 0` forbids fine-tuning), and there is no "unset" state at all. A storage column added with the customary `@default(0)` therefore forbids every upload on every existing B2B tier the moment it lands, unless the same migration gives each tier a real figure. Deciding "no cap for now" is a legitimate answer; leaving it undecided means the answer is "no cap" without anyone having chosen it.
 - Whether to enable the free monthly credit at launch, and its size/eligibility (the ledger supports it either way, §5.1).
 - **Compute variant: our Kubernetes or managed serverless** (§5.5) — the highest-order open decision, and a **gate on the infrastructure work** rather than a later step, because it determines whether §2.4's "extend the platform" conclusion still holds, what the tenant contains, whether Airflow exists at all, and how the second isolation gate is implemented. Everything above the dispatch boundary — the MCP tool contract, token metering, identity, the edition manifest, the plugin artifacts — is invariant and can be built while it is open.
 - **GPU access strategy within Variant A** (§5.4) — the decision with the most direct effect on margin. Launch on AWS is the recommendation, but three sub-decisions are genuinely open and one of them costs money by default: (a) **spot versus on-demand for the consumer namespace** — the default is spot, the embedding DAG configures no retries, and a spot interruption becomes a refunded failure we still pay for; (b) whether to keep the already-integrated **Nebius** path as the overflow route, accepting its image-tag skew and `/datasets`-prefixed artifact paths; (c) whether **Modal** becomes the escape hatch when consumer load contends with client capacity. Baseten is a partial fit for a different product shape, and Runware was evaluated and ruled out (it cannot run our container).
@@ -901,6 +920,6 @@ Still open:
 - **Customer-facing support channel** — none exists; needed before distribution (§9).
 - **Whether local execution (§7.2) is a funnel or a leak.** The argument for it is that a user with an idle GPU was never going to pay per token for a small job, that local is the only correct answer when data cannot leave the machine, and that it reaches the ten reference prompts whose models the platform does not host. The argument against is that it makes the free path a first-class part of a paid product. Worth deciding deliberately rather than by default.
 - Trimmed `modules/tenant` variant for the consumer tier: dashboard + Airflow + MLflow only, dropping JupyterHub, Coder, and Redis (§2.2 — scope now settled, the module work is not).
-- Retention and deletion policy text, including the 90-day inactivity boundary, unspent-credit treatment, and the indefinitely-retained, non-downloadable inputs of §5.6.
+- Retention and deletion policy text, including the 90-day inactivity boundary, unspent-credit treatment, and the indefinitely-retained, non-downloadable inputs of §5.7.
 - Whether the 2026-07-29 decision to let users see that other indications exist applies to the consumer tenant. This design assumes it does **not**: a consumer user sees no project or indication concept at all (§2.2). If it does apply, the invisible-project premise and the isolation acceptance criteria need revisiting.
 - The MCP endpoint's protocol layer — session posture, error mapping, and how `tools/list` is generated from the route registry (scoped in §11.9).
