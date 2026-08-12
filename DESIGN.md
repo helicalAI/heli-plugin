@@ -72,22 +72,35 @@ Trim scope (settled in review): the consumer tenant needs only the dashboard, Ai
 
 Compute locality is unresolved (§14), and it is not a purely operational question — three of its consequences reach billing correctness, so it is treated as its own decision in §5.4.
 
-### 2.3 Porting rules for the MCP façade
+### 2.3 One endpoint set, two surfaces
 
-The MCP surface **replicates the relevant `agentcore-mcp` routes into a B2C route group**. It is a port, not a second system: the replicas keep calling the dashboard's own application services and the dashboard's database. What they shed is the *UI-shaped* assumptions, because a B2C user never opens the platform UI — only the four account screens: sign-up, sign-in, top-up, and balance (§2.5). Concretely that means dropping the `conversationId` those routes use to resolve and authorize a project, and dropping the in-chat approval queue, which would otherwise queue an approval into a screen the user will never see (§6.1).
+**Nothing is replicated — not the DAGs, not the services, not the endpoints.** There is one definition of each tool, and the two MCP surfaces are the same definition registered twice with different middleware injected. `agentcore-mcp` (the enterprise chat gateway) and `platform-mcp` (the B2C plugin) differ in exactly three things: **which tools each exposes**, **how the project is resolved**, and — for B2C only — **the billing debit**. Everything below those seams is shared code on a single path.
+
+An earlier draft of this section described "replicating the relevant routes into a B2C route group". That was wrong, and the correction matters: a replica keeps working right up until someone fixes a bug in one copy. The rule is that a second surface may inject behaviour, never restate it.
+
+Concretely, as implemented:
+
+- **The tool lives in `src/lib/mcp/tools/<domain>/<tool>.ts`** — its Zod contract, its description, its call into the application service. It is a function of the middleware it will be given.
+- **The middleware is a small injected interface.** `ProjectSource` is the one that carries the scope difference: it declares the body fields the surface contributes (`agentcore-mcp` adds a caller-supplied `projectId` gated on membership; `platform-mcp` adds *nothing at all*) and resolves them to a project. Both halves live in one object deliberately, because a resolver and the fields it reads drift into a compile-clean, runtime-broken pair when they are separate arguments.
+- **The route file is the registration, and nothing else.** In full: import the shared tool, hand it the surface's source, register it with the surface's factory. Three lines. If a route file grows logic, that logic belongs in the shared tool with a seam for the difference.
+- **The exposure filter is the set of route files that exist.** A tool absent from a surface has no registration there, so it cannot be reached and does not appear in that surface's published spec. Exposure is structural rather than a runtime flag: the spec *is* the allowlist.
+
+What B2C sheds is the *UI-shaped* assumptions, because a B2C user never opens the platform UI — only the four account screens: sign-up, sign-in, top-up, and balance (§2.5). That means the `conversationId` those routes use to resolve and authorize a project, and the in-chat approval queue, which would otherwise queue an approval into a screen the user will never see (§6.1). Both are injected differences, not forks.
 
 - each tool maps to an existing dashboard route or shared service (`src/trpc/routers/**` service modules, `agentcore-mcp` handlers), preserving its validation, Zod contract, and policy behavior;
 - **every ported or new service re-checks membership itself.** Today, shared services take `(prisma, args)` and rely on the calling procedure/route for authorization; that caveat is retired. The subject→project resolution and the membership check move into the service, so no caller can reach data by skipping the gate;
 - `conversationId`-based scoping (used by the chat-bound `agentcore-mcp` routes such as `triggerEmbedding` and `listModels`) is replaced by **subject-derived project resolution** — the MCP caller has no dashboard conversation;
 - **the approval queue is replaced by direct execution** (§6.1), which is what makes the `triggerValidated` helper — present in `agentcore-mcp/airflow/trigger/_helpers.ts` today with zero callsites — finally the one that gets used;
 - **project scope leaves the URL entirely** (§2.3.1);
-- the routes that `agentcore-mcp` simply lacks are added rather than replicated: the cost estimate, the balance read, dataset upload and registration, and artifact download (§8.2 lists the full gap);
+- the tools `agentcore-mcp` simply lacks are added once, in the shared layer, and registered only on the surfaces that should have them: the cost estimate, the balance read, dataset upload and registration, and artifact download (§8.2 lists the full gap);
 - generic passthrough, raw queries, project CRUD, and collaboration primitives are omitted;
 - platform failures are normalized into the public error contract (§6) without leaking internal identifiers;
 - the `projectScopeRule` ESLint rule is extended to cover the new route group, so a missing scope predicate fails CI there exactly as it does in the tRPC routers. It has repeatedly caught what it was designed for, and the new surface is precisely where an unscoped query would be most costly;
 - the group publishes its own OpenAPI 3.1 spec plus a browsable Swagger UI (mirroring the bio-agent service's `/docs`), so what is exposed is auditable at a glance rather than inferred from the filesystem.
 
-Mechanically this is the same authoring pattern as the current in-dashboard agent routes — `defineGetTool`/`definePostTool` with Zod contracts and bearer auth — with one change: the OpenAPI registry is injected instead of imported as a singleton, so the new routes register into their own spec. The enterprise AgentCore spec is untouched and never gains these tools.
+Mechanically this is the same authoring pattern as the current in-dashboard agent routes — `defineGetTool`/`definePostTool` with Zod contracts and bearer auth — with the singleton dependencies made injectable: the OpenAPI registry, the bearer policy, and the project source. The enterprise AgentCore spec is untouched and never gains a tool it does not register.
+
+**What this leaves as genuinely new work is narrow, and worth naming, because everything else is already built:** the billing debit (§5) and the per-surface exposure filter. Nothing else about the B2C path is a new system — same DAGs, same Airflow, same services, same database, same endpoints.
 
 Adding a capability to the MCP surface requires an allowlist and security review; the dashboard supporting it is not sufficient.
 

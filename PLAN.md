@@ -120,12 +120,25 @@ Two things this audit surfaced that were not previously tracked:
 - **Model rename** (#1840) exists only as a tRPC procedure and is keyed on `mlflowRunId` while the rest of the surface uses `model_id`. Exposing it means resolving one to the other, or accepting an inconsistent identifier in one tool.
 - **Model upload** (#1841) has no precedent anywhere in the platform — MLflow is populated exclusively by fine-tuning runs. This is not an endpoint, it is a feature: validating an uploaded artifact, registering it in MLflow, deciding what a user-supplied model may be used for, and pricing it, since §5.1 prices per token by *model coefficient* and an unknown model has none. **It needs a scope decision before it is estimated** — it may well not belong in the first release.
 
-## Milestone 1 — Dashboard: subject-scoped MCP route group + user provisioning
+## Milestone 1 — Dashboard: the second MCP surface + user provisioning
 
 Everything gated by env `INDIVIDUAL_TENANT=true`; flag off ⇒ zero behavior change.
 
-### 1.1 Generalize the tool-definition lib
+**Nothing here is a port, a copy, or a wrap.** One tool definition lives in
+`src/lib/mcp/tools/<domain>/<tool>.ts`; each surface registers it with its own middleware
+injected, and the route file is the registration and nothing else — import the shared tool,
+hand it the surface's `ProjectSource`, register with the surface's factory. Three lines.
+`agentcore-mcp` and `platform-mcp` differ in **which tools they register**, **how the project
+is resolved**, and — B2C only — **the billing debit**. Below those seams the path is identical:
+same services, same DAGs, same Airflow, same database.
+
+The "Port" column in the inventory above means "this endpoint already exists and gains a second
+registration", never "this endpoint gets a B2C twin". If a difference cannot be expressed as an
+injected seam, that is the signal to widen the seam, not to fork the handler.
+
+### 1.1 Generalize the tool-definition lib — **shipped** (#1757)
 - Extract `src/app/api/agentcore-mcp/_lib/define-tool.ts` + `_lib/registry.ts` so the `OpenAPIRegistry` is injected (e.g. `makeDefineTool(registry)`) instead of imported as a singleton. `agentcore-mcp` behavior stays byte-identical (its spec, its S3-published OpenAPI, its tests).
+- The injectable seams that followed: `ProjectSource` (`src/lib/mcp/project-source.ts`) for scope, `run-scope.ts` for run reads, and the per-surface `_lib/` instantiations of each. These are the middleware; adding a surface means adding instantiations, never handlers.
 - New group `src/app/api/platform-mcp/` with its own `_lib/` (own registry), own `openapi.json` route (bearer-gated), own README documenting conventions.
 - Port the registration-drift test pattern (`tests/agentcore-mcp/route-registration-drift.test.ts`) for the new registry.
 
