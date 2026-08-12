@@ -37,7 +37,11 @@ The plugin is a façade over three existing repositories:
   - The dashboard already exposes ~44 agent-facing routes under `src/app/api/agentcore-mcp/` built with `defineGetTool`/`definePostTool` (Zod contracts, Cognito bearer auth, OpenAPI 3.1 registry). **This surface is not an MCP server** — it is an OpenAPI spec consumed by an AWS Bedrock AgentCore Gateway that fronts a full agentic loop. It is the primary source of ported route logic, not the transport.
   - Fail-closed project scoping is the repo's central invariant: `memberProjectWhere` / `projectScope` (`src/lib/projectAccess.ts`, `src/lib/projectScope.ts`), ESLint-enforced in routers (`eslint-rules/projectScopeRule.ts`), specified in `docs/DATA_SEPARATION.md`, and re-checked independently by the `check_access` first task of every DAG in the `dags` repo.
 - **`infra`** — Terraform. One `modules/tenant` instantiation per tenant: its own Cognito user pool, five RDS instances, S3 buckets, Airflow, JupyterHub, and (where enabled) the AgentCore stack. Identity findings that constrain this design are in §4.
-- **`helical-mcp`** — a Python **Streamable HTTP MCP server** (`/mcp`) already deployed in-cluster (built by `envs/dev/helical-mcp-cpl/`, rolled out by ArgoCD as `mcp-dev`/`mcp-stage`). It holds no credentials: `ForwardSessionMiddleware` captures the caller's `Cookie`/`Authorization` headers and forwards them to the dashboard, which remains the single authority for authorization. **This is the MCP transport for the plugin.** Its current tool set has drifted from the dashboard's `agentcore-mcp` surface (it targets an older `/api/mcp/...` subset); reconciling that drift is part of the port (§11).
+- **`helical-mcp`** — one name, two different things; keep them apart.
+  - The **repo** `helicalAI/helical-mcp` no longer exists. It held a Python MCP server targeting `/api/mcp/trpc/*`, deleted from the dashboard in `233f4aa8`, so every tool it exposed 404s. Nothing here builds on it.
+  - The **OAuth proxy** provisioned by `infra/modules/tenant/user_pool_client_mcp.tf` is live, enabled on `stage-tenant`, and is **the source of truth for authentication in this design** (§4). It is a FastMCP `AWSCognitoProvider` OAuthProxy fronting the per-tenant AgentCore Gateway, giving MCP clients an "add URL → browser login → use tools" experience.
+
+  Tools still live in the dashboard route group. Auth follows the proxy.
 - **`dags`**, **`configs`**, **`bioagents`**, **`bioutils`** — also central to any change that reaches compute: `dags` holds the Airflow DAGs (including the `check_access` gate), `configs` the per-tenant Kubernetes manifests, `bioagents` the data-ETL service the dataset tools call, and `bioutils` the shared analysis library.
 
 ### 2.2 The individual-user tenant
@@ -46,17 +50,25 @@ Initially, individual users are served by a **new "physical person" tenant**: on
 
 Within this tenant:
 
-- **One project per user, auto-provisioned.** On first authenticated request (or via a Cognito post-confirmation hook), the platform transactionally creates a `Project` with an opaque, subject-derived slug (e.g. `user-<cognito-sub>`; the slug is a security principal in S3 paths and MLflow experiment names, so it must be immutable and non-enumerable) and a single `ProjectMembership { userId, projectId, role: EDITOR }`.
+- **One project per user, auto-provisioned.** On first authenticated request (or via a Cognito post-confirmation hook), the platform transactionally creates a `Project` and a single `ProjectMembership { userId, projectId, role: EDITOR }`.
+
+  **Slug convention** — an open decision, currently `user-<short-cognito-sub>-01`, `-02`, … A slug must be globally unique, and it is a security principal in S3 paths, so it must be immutable. The indexed form is preferred over a bare `user-<sub>` for two reasons: all of one user's projects sort together, and the owner is recoverable from the slug alone when debugging. **Ship one project per user, but do not make a second one unrepresentable** — `ProjectMembership` is already many-to-many, so multi-project support is a product decision rather than a schema change. Final scheme TBD.
 - **The user owns everything inside it.** All uploaded datasets, embedding runs, artifacts, and downloads are collected in that project.
-- **Provisioning also creates the user's MLflow workspace.** Workspaces are created by hand in the MLflow UI today. Self-service signup cannot depend on a manual step, so the provisioning path must also create the MLflow workspace that `workspaceForProjectSlug(slug)` resolves to, alongside the project and membership. A user whose workspace is missing cannot complete a run.
-- **Cross-indication porting is disabled.** Copying runs, models, or datasets between projects (`docs/PORTING.md`, `models.copyToWorkspace`, `dataSc.importFromProject`) is already unreachable here because a user is the sole member of exactly one project — but it is gated off explicitly rather than left to follow from scoping.
+- **The MLflow workspace is a fine-tuning concern, not a launch blocker.** `embedding_dag.py` contains no MLflow reference at all — MLflow enters via `db/finetuning.py` and the Nebius fine-tuning DAGs, where a trained model is registered. So the **vanilla embedding launch needs no workspace**, and automating its creation belongs with roadmap stage 2 (§7.0), not with provisioning.
+
+  What the DAG *does* require is `metadata.project_id` and `metadata.project`: `assert_project_access` — the fail-closed first task of every DAG — refuses to start unless a `project_membership` row joins the triggering `cognito_sub` to that project, and separately refuses any `/projects/<slug>/…` path in the conf that does not belong to the run's own project. That is data-path scoping, not workspace scoping; conflating the two is what made an earlier draft of this section treat the workspace as mandatory for embeddings.
+
+  Workspaces are still created by hand in the MLflow UI, so automating that remains real work — it just gates fine-tuning rather than signup.
+- **Cross-indication porting is disabled, in two places.** Copying runs, models, or datasets between projects (`docs/PORTING.md`, `models.copyToWorkspace`, `dataSc.importFromProject`) is already unreachable here because a user is the sole member of exactly one project — but it is gated off explicitly rather than left to follow from scoping. **The copy DAGs are additionally toggled off in Airflow itself**, so the path is closed at the executor as well as in the application: a DAG triggered directly through the Airflow API, which never passes through the BFF, cannot copy either.
 - **No collaboration.** No second membership is ever created; no sharing, invitations, membership listing, or cross-user search exist in this tenant. Collaboration remains a future security model, not something to approximate now.
 - **No project management in the MCP surface.** Tools derive the project from the verified subject; they never accept or return a project selector. The project is an internal tenancy adapter, and the existing enterprise admin flows (`projects.create` is `helicalAdminProcedure`) are bypassed by a dedicated internal provisioning path — not exposed as a tool.
 - **Isolation invariants carry over unchanged** from `docs/DATA_SEPARATION.md`: membership predicate inside the `WHERE`, 404 on reads / 403 on writes, nonexistent and unauthorized collapse into the same response, no cross-user rows, counts, facets, or timing signals.
 
 Cost note: `modules/tenant` has no "lite" variant — a new tenant inherits 5 RDS instances, Redis, EFS, JupyterHub, and Airflow (28 required variables, 17 of them secrets). Right-sizing the individual tenant is an infra work item, not a blocker.
 
-Trim scope (settled in review): the consumer tenant needs only the dashboard, Airflow, and MLflow. JupyterHub and the Coder/VSCode surface are dropped, and Redis is an Airflow dependency that can go with them. That lands well below the enterprise tenant's five RDS instances; the exact trimmed module variant stays an infra work item. Note this trim assumes Variant A — if compute moves to a managed serverless platform (§5.5), Airflow leaves too and the tenant shrinks further, possibly to no Kubernetes at all.
+Trim scope (settled in review): the consumer tenant needs only the dashboard, Airflow, and — **from stage 2 onward** — MLflow. JupyterHub and the Coder/VSCode surface are dropped, and Redis is an Airflow dependency that can go with them.
+
+**MLflow can be deferred out of the launch tenant entirely.** Stage 1 is embeddings, whose DAG touches no MLflow (§7.0); the registry is first needed when fine-tuning registers a trained model. So the embed-only tenant is dashboard + Airflow, and MLflow — a service plus its RDS instance — arrives with stage 2 rather than at signup. Worth taking: it removes a whole component from the thing that has to work on day one, and the alternative is provisioning a registry that nothing writes to. That lands well below the enterprise tenant's five RDS instances; the exact trimmed module variant stays an infra work item. Note this trim assumes Variant A — if compute moves to a managed serverless platform (§5.5), Airflow leaves too and the tenant shrinks further, possibly to no Kubernetes at all.
 
 Compute locality is unresolved (§14), and it is not a purely operational question — three of its consequences reach billing correctness, so it is treated as its own decision in §5.4.
 
@@ -201,8 +213,9 @@ flowchart LR
     U["User in Codex / Claude / ChatGPT"]
     H["MCP client"]
     A["Cognito hosted UI<br/>(per-tenant auth domain)"]
-    M["helical-mcp<br/>Streamable HTTP MCP server"]
-    D["Dashboard API<br/>(ported allowlisted routes)"]
+    X["MCP OAuth proxy<br/>(DCR shim, confidential client)"]
+    M["Dashboard MCP endpoint<br/>(Streamable HTTP)"]
+    D["Dashboard tool routes<br/>(ported, subject-scoped)"]
     B["Subject → project binding<br/>(auto-provisioned, 1:1)"]
     S["Shared services<br/>(membership re-checked)"]
     L["Token ledger + price table"]
@@ -211,8 +224,9 @@ flowchart LR
     W["Payment provider webhook<br/>(Stripe-seeded, §5.3)"]
 
     U --> H
-    H <-->|"Authorization Code + PKCE"| A
-    H -->|"Bearer access token"| M
+    H <-->|"add URL, dynamic registration"| X
+    X <-->|"Authorization Code + PKCE"| A
+    X -->|"Bearer access token"| M
     M -->|"forwarded bearer"| D
     D --> B
     B --> D
@@ -223,19 +237,26 @@ flowchart LR
     W --> L
 ```
 
-- The MCP server stays sessionless and credential-free; the dashboard verifies every forwarded token and is the sole authorization authority.
+- The proxy exists to give MCP clients dynamic registration, which Cognito does not offer (§4.3). It holds the client secret and nothing else: the token it obtains is an ordinary Cognito access token, and the dashboard verifies every forwarded token and remains the sole authorization authority.
+- The dashboard MCP endpoint stays sessionless and credential-free.
 - The token ledger is written server-side from authoritative run outputs — never from client-supplied counts.
 - Checkout/top-up happens on the merchant domain; the payment processor is still an open decision, seeded with Stripe (§5.3).
 
 ## 4. Identity, signup, and account linking
 
-Grounded in the `infra` repo (`modules/tenant/`): each tenant has its own Cognito user pool, hosted UI domain (`<sub>.platform.helical-ai.bio`, ACM cert in us-east-1), and app clients. Authorization Code + PKCE is viable today on the public-client pattern (`main` client: `allowed_oauth_flows = ["code"]`, no secret). There is **no OAuth issuer other than Cognito**, and none is needed.
+Grounded in the `infra` repo (`modules/tenant/`): each tenant has its own Cognito user pool, hosted UI domain (`<sub>.platform.helical-ai.bio`, ACM cert in us-east-1), and app clients. There is **no OAuth issuer other than Cognito**, and none is needed.
+
+**The authentication design here is not new work — it follows the MCP OAuth proxy already provisioned in `modules/tenant/user_pool_client_mcp.tf` and enabled on `stage-tenant`, which is the source of truth.** That structure exists because raw Cognito cannot present the dynamic-registration surface MCP clients expect; everything below is a consequence of adopting it rather than an alternative to it.
 
 ### 4.1 Required infra changes for the individual tenant
 
 1. **Enable self-signup with a new variable.** `user_pool.tf:88-90` sets `allow_admin_create_user_only = true` unless `enable_sso` is on. Do not reuse `enable_sso` (it drags in the OIDC IdP and relaxes required attributes); add an explicit `allow_self_signup` flag. Email verification via the existing SES identity; password policy (14 chars, symbols) stays.
-2. **Add a dedicated public MCP app client**: `allowed_oauth_flows = ["code"]`, no secret, PKCE, pinned redirect URIs. Cognito has no wildcard ports, so local MCP clients need a fixed loopback callback (e.g. `http://127.0.0.1:41234/callback`) plus the hosted client callback(s). Refresh token validity 30 days (matching the `agentcore` client), not the 5-day default of `main`.
-3. **Grant a custom resource-server scope.** The AgentCore gateway (and, by convention, any JWT-gated surface here) rejects tokens carrying only standard OIDC scopes; the MCP client must request a custom scope (reuse `agentcore/invoke` or add `helical-mcp/invoke` to a resource server) and the client must list it in `allowed_oauth_scopes`.
+2. **Enable the existing MCP OAuth-proxy client** — do not add a new one. `user_pool_client_mcp.tf` already provisions `aws_cognito_user_pool_client.mcp`, a **confidential** client (`generate_secret = true`) for the proxy, gated on `enable_helical_mcp` and requiring `helical_mcp_public_url`. For the individual tenant, set both. Its refresh validity is already 30 days.
+
+   The client is confidential, not public, because the proxy holds the secret — the MCP client never sees it. This also disposes of the loopback problem: **the only callback registered with Cognito is the proxy's** `<public_url>/auth/callback`. A client's own loopback redirect is handled by the proxy, so Cognito's lack of wildcard ports never arises.
+
+   The proxy's client id is appended to the AgentCore Gateway's `allowed_clients` (`agentcore.tf`), and must likewise be listed in the dashboard's `COGNITO_PLATFORM_MCP_ALLOWED_CLIENT_IDS`.
+3. **Custom resource-server scope: already granted.** JWT-gated surfaces here reject tokens carrying only standard OIDC scopes. The proxy client already requests `openid`, `email` and `agentcore/invoke` (`cognito-resource-server.tf`), so no new resource server is needed. A dedicated `platform-mcp/invoke` scope would mean a second resource server on every tenant, and the dashboard already discriminates these callers by client id.
 4. **Custom-domain cap**: only 4 Cognito custom domains per region; the new tenant may need the `*.auth.<region>.amazoncognito.com` fallback (`disable_cognito_domain = true`). Functionally fine for PKCE; cosmetically worse for a consumer sign-in page.
 5. **One consumer pool, all channels.** A single Cognito user pool serves every individual user regardless of which client they arrive from — Codex, Claude, or a future one. The channel is not an identity boundary. Per-tenant pools remain the enterprise model.
 6. **Social identity providers (optional).** Google, Microsoft, and Apple sign-in are inexpensive to add on the pool side (`supported_identity_providers` plus one `aws_cognito_identity_provider` per IdP) and cut consumer signup friction materially. Shipping them at launch is an open decision (§14), but the pool cannot be replaced later to accommodate them: Cognito attribute schemas are immutable, so `given_name`/`family_name`/`phone_number` must already be relaxed to optional when the pool is created.
@@ -250,16 +271,16 @@ Also required for this tenant: gate off the Jupyter/Coder surface, and gate off 
 
 ### 4.3 Protocol plumbing
 
-- Cognito publishes OIDC discovery at the issuer, but nothing serves RFC 9728 protected-resource metadata. **helical-mcp must serve `/.well-known/oauth-protected-resource`** pointing at the tenant issuer so spec-compliant MCP clients can discover the authorization server, and return the MCP OAuth challenge (`401` + `WWW-Authenticate`) on unauthenticated calls.
-- Cognito does not implement Dynamic Client Registration; the plugin ships a **pre-registered `client_id` per tenant**. Because pools (and therefore issuers and client IDs) are per-tenant, the plugin configuration must carry the tenant's issuer + client ID rather than hardcoding one authorization server.
-- Token verification on every request: signature, issuer, audience/client allowlist, expiry, required scope — then subject → project resolution.
+- **Dynamic Client Registration is the whole problem, and the proxy is the answer.** The MCP OAuth flow expects RFC 7591 dynamic registration; Cognito does not implement it. Rather than requiring every client to accept a pre-registered `client_id`, the proxy presents a DCR-compliant surface and **fakes registration onto the one confidential upstream client**, proxying Authorization Code + PKCE to the Cognito hosted UI. Clients therefore add a URL and log in through a browser, with no per-tenant configuration to distribute.
+- **The proxy is the OAuth surface clients discover**, so it — not the dashboard — is what must serve RFC 9728 protected-resource metadata and the `401` + `WWW-Authenticate` challenge. The dashboard's job is narrower: verify the resulting Cognito token, and reject one from a client it does not expect.
+- Token verification on every request: signature, issuer, audience/client allowlist, expiry, required scope — then subject → project resolution. Unchanged by the proxy, which is deliberate: the token the dashboard sees is a normal Cognito access token, and the proxy holds no privilege of its own.
 
 ### 4.4 The linking flow
 
-1. The user invokes a protected tool; helical-mcp returns the OAuth challenge.
-2. The MCP client opens the Cognito hosted UI; the user signs in **or self-registers** (individual tenant only), verifying their email.
-3. Authorization Code + PKCE completes; the client holds a bearer access token (8 h) and refresh token (30 d).
-4. The MCP server forwards the bearer to the dashboard, which verifies it, resolves or transactionally creates the user's project, and serves the call.
+1. The user adds the proxy's URL to their MCP client and invokes a protected tool; the proxy returns the OAuth challenge and accepts the client's dynamic registration against its one upstream client.
+2. The proxy redirects to the Cognito hosted UI; the user signs in **or self-registers** (individual tenant only), verifying their email.
+3. Authorization Code + PKCE completes against Cognito, with the proxy holding the client secret and the client's own loopback redirect handled by the proxy rather than Cognito. The user ends up with a bearer access token (8 h) and refresh token (30 d).
+4. The bearer reaches the dashboard, which verifies it, resolves or transactionally creates the user's project, and serves the call.
 5. No relinking is needed when balances or prices change — entitlement is checked server-side per call, never encoded in the token.
 
 ## 5. Metering, billing, and entitlements
@@ -422,11 +443,15 @@ This is an accepted risk, revisit if the surface ever exposes destructive operat
 
 ### 7.0 Exposure roadmap
 
-Operations are exposed in this order, each gated behind its own allowlist and security review:
+Operations are exposed in this order, each gated behind its own allowlist and security review. **Stage 1 is the commitment; stage 3 is not yet one.**
 
-1. **Compute embeddings** — this section; the launch surface.
-2. **Fine-tune a model** — port of the `finetuning` DAG trigger (`agentcore-mcp/airflow/trigger/finetuning/`) plus run/status/artifact reuse from group (c)/(d). Fine-tuned models then appear in `list_models` with their own per-token price. Requires a fine-tuning entry in the price table and estimator (training tokens ≠ inference tokens).
-3. **Run a perturbation analysis** — port of the `perturbation` DAG trigger and perturbation-results routes (`agentcore-mcp/airflow/trigger/perturbation/`, `airflow/perturbation-results/`). Note the source route is the repo's reference for union-free request schemas.
+1. **Compute embeddings** — this section; the launch surface. **Touches no MLflow at all** (`embedding_dag.py` contains no MLflow reference), so nothing about model registration, workspaces, or the registry gates the launch.
+2. **Fine-tune a model** — port of the `finetuning` DAG trigger (`agentcore-mcp/airflow/trigger/finetuning/`) plus run/status/artifact reuse from group (c)/(d). Fine-tuned models then appear in `list_models` with their own per-token price. Requires a fine-tuning entry in the price table and estimator (training tokens ≠ inference tokens). **This is where MLflow enters** — via `db/finetuning.py` and the Nebius fine-tuning DAGs, because a trained model has to be registered somewhere. Automating per-user workspace creation (#1835) therefore belongs to this stage, not to signup.
+3. **Run a perturbation analysis (ISP)** — *tentative*. Port of the `perturbation` DAG trigger and perturbation-results routes (`agentcore-mcp/airflow/trigger/perturbation/`, `airflow/perturbation-results/`). The source route is the repo's reference for union-free request schemas.
+
+**The MLflow dependency is staged, not global.** Reading it as a platform-wide prerequisite is what made an earlier draft treat workspace provisioning as a launch blocker. Each stage should be checked the same way — what does *this* operation's DAG actually touch — rather than inheriting the union of every stage's dependencies.
+
+**If ISP is taken up, it needs a metering decision first.** The platform already meters in-silico perturbation for enterprise tenants through a *different* system: `ProjectTypeQuota.isp_credits_*` and `Project.isp_credits_from_pool`, an entitlement counter of runs drawn from a pooled per-tier allowance (`docs/COST_CONTROL.md`). B2C meters the same operation as money, per token, through `CreditLedger`. Two systems would then meter one operation, and which governs a B2C perturbation run is a product question, not an implementation detail. Embedding and fine-tuning have no such overlap — this is specific to ISP, and it is the main reason stage 3 is worth deciding on rather than assuming.
 
 Later stages reuse the group structure below (list → upload/select → estimate → run → results) and inherit all porting rules (§2.3), the estimator obligation (§5.2), and the confirmation policy (§6.1) unchanged — a new operation adds tools, never new authorization or billing semantics.
 
@@ -441,7 +466,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### b. Datasets
 
 - **`create_dataset_upload`** — returns a short-lived, project-scoped presigned S3 PUT URL for a new dataset file (`.h5ad` first). The MCP transport never carries file bytes.
-- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services; helical-mcp already wraps `analyze_sc_upload` / `create_sc_dataset`) and returns the dataset record with row/gene counts.
+- **`register_dataset`** — after upload, runs the existing single-cell analyze/import/QC path (`dataSc` services — the procedure bodies are inline today and need lifting into a shared service) and returns the dataset record with row/gene counts.
 - **`list_datasets`** / **`get_dataset`** — port of the data catalog routes (`agentcore-mcp/data/`), including columns/obs metadata needed for estimation.
 
 ### c. Embedding runs
@@ -566,7 +591,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 ### Credentials
 
-- Never commit, return, interpolate into prompts, or log credentials; helical-mcp holds none and only forwards the caller's bearer.
+- Never commit, return, interpolate into prompts, or log credentials. The MCP endpoint holds none: it verifies the caller's bearer and derives scope from the verified subject.
 - Environment-token configuration is for local development only; production is OAuth per §4.
 - Short-lived access tokens (8 h) with 30-day refresh; revocation is enabled on the pool.
 
@@ -604,7 +629,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 ### Profile A: local development
 
-- Bundled STDIO scaffold with `HELICAL_API_BASE_URL` / `HELICAL_API_TOKEN` supplied outside the repo, or helical-mcp run locally against a dev dashboard with a Cognito bearer (the dashboard repo's `tests/localMcpTest` harness shows the pattern).
+- Bundled STDIO scaffold with `HELICAL_API_BASE_URL` / `HELICAL_API_TOKEN` supplied outside the repo, pointed at a dev dashboard with a Cognito bearer (the dashboard repo's `tests/localMcpTest` harness shows the pattern).
 - No signup or billing; fixtures must still exercise cross-project denial.
 
 ### Profile B: enterprise tenants (existing)
@@ -616,7 +641,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 - New `modules/tenant` instantiation with `allow_self_signup`, the public MCP app client, and the custom scope (§4.1), trimmed to dashboard + Airflow + MLflow (§2.2).
 - Runs the `b2c` edition (§2.5): authentication, self-service sign-up, and checkout only, plus the MCP tool surface. The platform UI is unreachable, enforced at the API and route layers rather than by hiding navigation.
-- helical-mcp deployed in-tenant as the Streamable HTTP MCP endpoint with RFC 9728 metadata.
+- The MCP OAuth proxy reachable in-tenant (`enable_helical_mcp`, `helical_mcp_public_url`), serving RFC 9728 metadata and the `401` challenge, with the dashboard's MCP endpoint behind it.
 - Auto-provisioned single project per user; no collaboration.
 - Per-token metering, prepaid credits (recommended), external top-up with verified webhooks.
 - Formal privacy, support, deletion, refund, and incident-response processes.
@@ -634,12 +659,12 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 **Product work:**
 
-5. **Infra**: stand up the individual tenant (`envs/<env>/individual-tenant/`, trimmed per §2.2); add `allow_self_signup`; add the public MCP app client (PKCE, pinned loopback + hosted callbacks, 30-day refresh); add/reuse the custom scope; decide custom-domain vs Cognito-domain fallback.
-6. **Dashboard, auth**: tighten `cognito-bearer-auth.ts` to an explicit client allowlist + scope enforcement; add the internal subject→project auto-provisioning path (transactional, opaque immutable slug, single EDITOR membership) and the per-user MLflow workspace it depends on.
+5. **Infra**: stand up the individual tenant (`envs/<env>/individual-tenant/`, trimmed per §2.2); add `allow_self_signup`; set `enable_helical_mcp` + `helical_mcp_public_url` to enable the existing OAuth-proxy client (§4.1.2) rather than adding a second one; decide custom-domain vs Cognito-domain fallback.
+6. **Dashboard, auth**: tighten `cognito-bearer-auth.ts` to an explicit client allowlist + scope enforcement; add the internal subject→project auto-provisioning path (transactional, immutable indexed slug, single EDITOR membership). The per-user MLflow workspace is **not** part of this — embeddings do not touch MLflow; it arrives with fine-tuning (§7.0 stage 2).
 7. **Dashboard, services**: move membership re-checks into each service being ported; replace `conversationId` scoping with subject-derived project resolution for the ported routes.
 8. **Billing**: add the price table (per-model coefficients derived from measured GPU-hours), token ledger (paid + free-grant credit classes, consumption ordering, expiry), row-locked balance check, and estimator service; compute tokens deterministically from dataset shape and the model coefficient — no dags-repo change is required — then debit at launch and refund terminal failures through idempotent ledger writes; add `get_balance` / `get_usage`.
-9. **helical-mcp**: reconcile its tool set with the current dashboard surface; implement the §7 tools; add the RFC 9728 metadata endpoint and OAuth challenge behavior; keep it sessionless.
-10. **Plugin artifacts**: point `.mcp.json` at the remote helical-mcp URL for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
+9. **MCP endpoint** (in the dashboard): a Streamable HTTP route speaking `initialize` / `tools/list` / `tools/call`, with descriptors generated from the same Zod schemas as the REST routes rather than written twice; RFC 9728 metadata and the OAuth challenge are served by the proxy in front of it (§4.3), not here; **stateless** — issue no `Mcp-Session-Id`, since the dashboard runs multiple replicas with no session affinity.
+10. **Plugin artifacts**: point `.mcp.json` at the dashboard's MCP endpoint for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
 11. **Payments**: select the processor (Stripe is the seed, §5.3) and integrate it behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified idempotent webhooks, and the Helical-owned top-up page. The selection gates the integration but not the ledger, which is processor-agnostic by construction.
 12. **Implement the compute decision from Gate 0** (§5.4): under Variant A, fix the spot-versus-on-demand posture and its retry policy, pin the image the token coefficients were measured against, and decide whether Nebius stays as the overflow route; under Variant B, build the dispatch, per-run scoped credentials, and artifact registration that replace the DAG's. The *decision* belongs at Gate 0; only the implementation belongs here.
 13. **Launch readiness**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today.
@@ -661,7 +686,7 @@ Work is tracked as GitHub epic [helicalAI/dashboard#1756](https://github.com/hel
 The scaffold's four unit tests, both skill validations, and the plugin validation must keep passing. Before production, add tests for:
 
 - valid, expired, malformed, wrong-issuer, wrong-client, and wrong-scope Cognito tokens; the client allowlist in `cognito-bearer-auth`;
-- PKCE flow, RFC 9728 discovery, OAuth challenge shape; self-signup followed by authorization continuation;
+- Proxy-mediated DCR + PKCE flow, RFC 9728 discovery, OAuth challenge shape; self-signup followed by authorization continuation;
 - first-request project auto-provisioning: exactly one project per subject, transactional under concurrent first calls, opaque slug;
 - cross-user denial for every tool: read, list, search, status, download, estimate — unauthorized ≡ nonexistent in status, shape, wording, and materially in timing;
 - estimator: accuracy bounds against metered actuals per model; quote expiry; quoted-price honoring across a price-table change;
@@ -794,7 +819,7 @@ The tables below reproduce the workbook verbatim as of 2026-07-31. If the workbo
 | Usage foundation | `dashboard/src/trpc/routers/admin/usage.ts`, `users/usage.ts`, `ActorType` |
 | Cognito pool + clients | `infra/modules/tenant/{user_pool.tf, user_pool_client*.tf, cognito-resource-server.tf, auth.tf}` |
 | Self-signup toggle | `infra/modules/tenant/user_pool.tf:88-90` |
-| MCP transport | `helical-mcp/src/helical_mcp/` (`server.py` ForwardSessionMiddleware, `tools/`) |
+| MCP transport | `dashboard/src/app/api/platform-mcp/` (the endpoint and its tool routes, one process) |
 | Local MCP harness | `dashboard/tests/localMcpTest/` |
 | Compute sourcing / provider fork | `dags/shared.py` (`DynamicK8sPodOperator.execute`, PVC lifecycle), `dags/determine_resources.py` (node-type → nodepool, spot-vs-on-demand by namespace) |
 | DAG database coupling | `dags/db/{access.py, run_meta.py, runs.py}` — raw SQL, Postgres enum casts, fail-closed reads and best-effort writes (§2.4) |
@@ -803,7 +828,7 @@ The tables below reproduce the workbook verbatim as of 2026-07-31. If the workbo
 
 Target architecture:
 
-> One dedicated individual-user tenant + Cognito hosted-UI signup with Authorization Code + PKCE + one auto-provisioned project per user (no collaboration) + helical-mcp as the Streamable HTTP MCP façade over ported, in-service-gated dashboard routes + per-token metering with per-model prices, a mandatory pre-run estimator, prepaid credits (with an optional free monthly token grant), and external top-up with verified webhooks + a `compute-embeddings` skill that requires user confirmation before billable work.
+> One dedicated individual-user tenant + Cognito hosted-UI signup with Authorization Code + PKCE + one auto-provisioned project per user (no collaboration) + a Streamable HTTP MCP endpoint in the dashboard over ported, in-service-gated routes + per-token metering with per-model prices, a mandatory pre-run estimator, prepaid credits (with an optional free monthly token grant), and external top-up with verified webhooks + a `compute-embeddings` skill that requires user confirmation before billable work.
 
 Still open:
 
@@ -817,4 +842,4 @@ Still open:
 - Trimmed `modules/tenant` variant for the consumer tier: dashboard + Airflow + MLflow only, dropping JupyterHub, Coder, and Redis (§2.2 — scope now settled, the module work is not).
 - Retention and deletion policy text, including the 90-day inactivity boundary and unspent-credit treatment.
 - Whether the 2026-07-29 decision to let users see that other indications exist applies to the consumer tenant. This design assumes it does **not**: a consumer user sees no project or indication concept at all (§2.2). If it does apply, the invisible-project premise and the isolation acceptance criteria need revisiting.
-- Reconciling helical-mcp's drifted tool set with the current dashboard surface (scoped in §11.5, mechanics to be designed in that repo).
+- The MCP endpoint's protocol layer — session posture, error mapping, and how `tools/list` is generated from the route registry (scoped in §11.9).
