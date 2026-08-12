@@ -1,6 +1,6 @@
 # Implementation Plan — Helical Platform Plugin (metered individual embeddings via MCP)
 
-Companion to [`DESIGN.md`](DESIGN.md). Design decisions live there; this document sequences the work into milestones and tickets across four repos: `dashboard`, `infra`, `helical-mcp`, `heli-plugin` (plus k8s manifests in the `configs` repo).
+Companion to [`DESIGN.md`](DESIGN.md). Design decisions live there; this document sequences the work into milestones and tickets across three repos: `dashboard`, `infra`, `heli-plugin` (plus k8s manifests in the `configs` repo).
 
 Status: planned · Last reviewed: 2026-07-30 · Tracked as GitHub epic [helicalAI/dashboard#1756](https://github.com/helicalAI/dashboard/issues/1756)
 
@@ -17,7 +17,7 @@ Load-bearing repo facts (verified 2026-07-27):
 
 | Fact | Consequence |
 |---|---|
-| `helical-mcp` targets `/api/mcp/trpc/*`, deleted from the dashboard in `233f4aa8` (2026-07-01). Every tool 404s. | Keep it as transport (FastMCP/`mcp` 1.26, Streamable HTTP, `ForwardSessionMiddleware`); rebuild every tool against a new surface. |
+| `helical-mcp` targets `/api/mcp/trpc/*`, deleted from the dashboard in `233f4aa8` (2026-07-01). Every tool 404s. | It is a **PoC remnant, superseded by `agentcore-mcp`** and not being revived. The MCP endpoint lives in the dashboard (M3). |
 | Live dashboard pattern: `src/app/api/agentcore-mcp/` — `defineGetTool`/`definePostTool` + Zod + `authenticateUser` bearer auth + singleton OpenAPI registry. | Reuse the lib with an injected registry for a new, separate route group so the enterprise chat gateway never sees the new tools. |
 | `_helpers.ts` exports **unused** `triggerValidated(input, user, projectSlug)` → `airflowServices.triggerDagRun` (validation, `output_dir` stamping, `assertTriggerProjectAccess`, `RunMeta` write inside). | The direct-launch path already exists; `startEmbeddingRun` wraps it. |
 | `auth.syncUser` → `addUserToDefaultProject` (`src/lib/auth-db.ts`) is the single login-time membership hook (currently joins hard-coded `pilot`). | Natural seam for per-user project auto-provisioning. |
@@ -27,7 +27,7 @@ Load-bearing repo facts (verified 2026-07-27):
 | The **dags repo writes `terminal_state`/`execution_time` directly to Postgres**; dashboard self-heals via `reconcileActiveRuns` on read. No webhook. | Billing settlement must be lazy (on read) + a sweep job; cannot rely on a dashboard-side completion callback. |
 | `src/lib/cognito-bearer-auth.ts:37` verifies with `clientId: null` (any client in pool; acknowledged TODO). | Must be tightened to an env-driven allowlist + scope check before exposure. |
 | Infra tenant = 4 files copied from `envs/stage/qa-tenant/` + gitignored tfvars (23 secrets/URLs). Pool has **no lambda triggers**. Cognito attribute `required` flags are immutable (change ⇒ pool replacement). | Self-signup + attribute relaxation must be correct at tenant birth; provisioning is lazy in-dashboard, not a Cognito trigger. |
-| `envs/dev/helical-mcp-cpl/` builds branch `develop` of `helicalAI/helical-mcp` — **which does not exist**; no `buildspec.yml`, no ECR repo in TF, no k8s manifests anywhere. | helical-mcp deployment is greenfield. |
+| `envs/dev/helical-mcp-cpl/` builds branch `develop` of `helicalAI/helical-mcp` — **which does not exist**; no `buildspec.yml`, no ECR repo in TF, no k8s manifests anywhere. | Nothing to deploy — the pipeline is dead scaffolding for a superseded PoC and can be removed. |
 | Browser services' ALB ingress uses `alb.ingress.kubernetes.io/auth-type: cognito`. | The MCP ingress must NOT copy those annotations (bearer-only, non-browser clients). |
 
 ---
@@ -133,9 +133,9 @@ Everything gated by env `INDIVIDUAL_TENANT=true`; flag off ⇒ zero behavior cha
 - Tests: wrong-client, wrong-scope, and legacy-mode acceptance.
 
 ### 1.3 Individual project auto-provisioning
-- `src/lib/individual-project.ts`: `resolveIndividualProject(prisma, user)` — transactional upsert of `Project { slug: "user-<cognitoSub>", name }` (satisfies the existing slug regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`; slug immutable — it is a security principal in S3 paths and MLflow workspace names) + `ProjectMembership { role: EDITOR }`.
+- `src/lib/individual-project.ts`: `resolveIndividualProject(prisma, user)` — transactional upsert of `Project { slug, name }` where the slug follows the indexed convention `user-<short-cognito-sub>-01` (satisfies the existing regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`; immutable — it is a security principal in S3 paths). The index is deliberate: one user's projects sort together and the owner is recoverable from the slug alone. Ship one, but do not make a second unrepresentable. + `ProjectMembership { role: EDITOR }`.
 - Wire into (a) `addUserToDefaultProject` (replaces the `pilot` join when `INDIVIDUAL_TENANT=true`), and (b) `requireSubjectProject(user)` — the per-request resolver every `platform-mcp` handler calls, so first authenticated MCP request provisions (DESIGN §4.4).
-- **Also provision the user's MLflow workspace** (#1835): workspaces are created by hand in the MLflow UI today, and a user without the one `workspaceForProjectSlug(slug)` resolves to cannot complete a run — the DAG operator refuses to start without `conf.metadata.project` precisely because it scopes that workspace. Idempotent, same concurrency guarantees as the project upsert.
+- **The MLflow workspace is NOT part of this milestone** (#1835 moves to roadmap stage 2). `embedding_dag.py` contains no MLflow reference; MLflow enters only through `db/finetuning.py` and the Nebius fine-tuning DAGs. What `assert_project_access` requires is `metadata.project_id` (a `project_membership` row must join the triggering `cognito_sub` to the project) and `metadata.project` (every `/projects/<slug>/…` path in the conf must belong to the run's own project) — data-path scoping, not workspace scoping. Automating workspace creation is still real work; it gates fine-tuning, not signup.
 - Membership re-check per DESIGN §2.3: the resolver + in-service checks, not just route-edge.
 - Tests: idempotency under concurrent first requests; slug shape; EDITOR role present; flag-off ⇒ untouched.
 
@@ -177,24 +177,30 @@ Prisma per `prisma/README.md` rules: inline model comments, ERD + Ownership-boun
 ### 2.3 Tests
 Debit/refund idempotency (incl. DAG retries), concurrent-kickoff no-overdraft race, free-before-paid ordering, grant non-accumulation, quote expiry, quoted-price honored across a price-table change.
 
-## Milestone 3 — helical-mcp: rebuild against the new surface
+## Milestone 3 — Dashboard: the native MCP endpoint — #1912
 
-### 3.1 Client + error hygiene
-- `src/helical_mcp/clients.py`: remove dead tRPC-proxy helpers; add `dashboard_plugin_get/post(path, ...)` targeting `/api/platform-mcp/*`; forward `Authorization` only (drop cookie forwarding on this surface); keep `forwarded_headers` contextvar + `ForwardSessionMiddleware`.
-- Catch `httpx` errors / dashboard error envelopes and re-raise sanitized messages (no URLs, no internals) — FastMCP surfaces exception text verbatim as the `isError` result.
+`helical-mcp` is a remnant of a past proof of concept, superseded by the `agentcore-mcp` pattern; there is no separate transport service. The MCP endpoint lives in the dashboard, in the same route group as the tools it serves. Tickets #1768–#1771 and #1775 are closed as not planned.
 
-### 3.2 Tool modules
-- `tools/{models,datasets,embeddings,results,account}.py`, one `async def tool_*` per DESIGN §7 tool; register in `server.py` (two-file convention); delete stale modules and README tool table rows.
-- Docstrings are the LLM contract: `tool_start_embedding_run` states "present the estimate and obtain the user's explicit confirmation before calling this" (mirrors the skill); cross-reference tools per house style.
+### 3.1 The protocol route
+- `src/app/api/platform-mcp/mcp/route.ts` speaking **MCP Streamable HTTP**: JSON-RPC over POST, handling `initialize`, `notifications/initialized`, `tools/list`, `tools/call`. Nothing in the dashboard does this today — a grep for `jsonrpc` / `tools/list` / `StreamableHTTP` across `src/` returns nothing — so this is net-new protocol code, not a port.
+- **Stateless**: issue no `Mcp-Session-Id`. The dashboard runs multiple replicas behind an ALB with no session affinity, so a session-bearing implementation needs sticky routing or shared state. If session state proves necessary, record the decision.
 
-### 3.3 Protocol + ops hardening
-- Mount next to `mcp.streamable_http_app()`: `GET /.well-known/oauth-protected-resource` (issuer/authz-server metadata from `COGNITO_ISSUER`, `MCP_RESOURCE_URL`), `GET /health`; `401` + `WWW-Authenticate` challenge when `Authorization` is absent.
-- Declare `uvicorn` as a real dependency (currently transitive); Dockerfile: non-root user, `HEALTHCHECK`, pinned `uv` base image.
+### 3.2 Descriptors generated, never written twice
+- `tools/list` is generated from the same Zod schemas that define the REST routes, through the injectable registry from M1.1 — with a registration-drift test mirroring `tests/agentcore-mcp/route-registration-drift.test.ts`.
+- `tools/call` dispatches to the same handler functions the REST routes call, so there is one implementation and one authorization path per tool.
+- The no-`oneOf`/`anyOf` rule does **not** apply here: it exists because the AgentCore Gateway rejects them, and this endpoint has no gateway. Keep closed schemas (`additionalProperties: false`) anyway — those are for the model, not the gateway.
+
+### 3.3 Auth and discovery
+**Authentication follows the existing OAuth proxy** (`infra/modules/tenant/user_pool_client_mcp.tf`), which is the source of truth for this design — see DESIGN §4. The proxy presents the DCR-compliant surface Cognito cannot, fakes registration onto its one confidential client, and proxies Authorization Code + PKCE to the hosted UI.
+
+- RFC 9728 metadata and the `401` + `WWW-Authenticate` challenge are the **proxy's** responsibility, not this endpoint's.
+- Bearer verification reuses `cognito-bearer-auth.ts` with a **new surface** (`"platform-mcp"`), per the per-surface policy from M1.2 — not the `mcp` surface, whose allowlist is the Gateway's. The allowlist contains the **proxy's** client id.
+- The token the dashboard sees is an ordinary Cognito access token; the proxy holds no privilege of its own.
 
 ### 3.4 Tests
-respx suites per tool group against mocked `/api/platform-mcp/*`; ASGI middleware test (currently untested); well-known/health tests.
+Protocol tests (`initialize` handshake, `tools/list` drift, `tools/call` dispatch), the 401 challenge and metadata document, and cross-user isolation through the endpoint as well as the REST routes.
 
-## Milestone 4 — Infra: individual tenant, Cognito, helical-mcp deployment
+## Milestone 4 — Infra: individual tenant and Cognito
 
 ### 4.1 Self-signup module change
 - New `allow_self_signup` (bool, default false, modeled on `enable_sso`).
@@ -202,17 +208,18 @@ respx suites per tool group against mocked `/api/platform-mcp/*`; ASGI middlewar
 - Regression gate: `terraform plan` renders **no changes** for every existing tenant (both expressions are identity-preserving for `(enable_sso, allow_self_signup=false)`).
 
 ### 4.2 MCP app client
-- `modules/tenant/user_pool_client_mcp.tf`, count-gated on new `enable_mcp_client`: public (`generate_secret = null`), `allowed_oauth_flows = ["code"]`, `explicit_auth_flows = [ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_AUTH, ALLOW_USER_SRP_AUTH]`, scopes `["openid","email","${aws_cognito_resource_server.agentcore.identifier}/invoke"]`, `refresh_token_validity = 30` (days), callbacks from new `mcp_client_callback_urls` (pinned loopback `http://127.0.0.1:<port>/callback` + hosted callback; Cognito has no wildcard ports).
-- Publish client id to SSM per the `api`/`m2m` convention.
+**No new client.** `modules/tenant/user_pool_client_mcp.tf` already provisions the confidential OAuth-proxy client, gated on `enable_helical_mcp` and enabled on `stage-tenant`. Adding a second would collide on the `aws_cognito_user_pool_client.mcp` address and destroy its Secrets Manager entry on apply.
+
+- For the individual tenant, set `enable_helical_mcp = true` and `helical_mcp_public_url`.
+- The only Cognito-registered callback is the proxy's `<public_url>/auth/callback`; a client's own loopback redirect is handled by the proxy, so Cognito's lack of wildcard ports never arises.
+- Scope is the existing `agentcore/invoke`; no second resource server.
 
 ### 4.3 Individual tenant env dir
-- `envs/dev/individual-tenant/` (dev first): copy `envs/stage/qa-tenant/{main.tf,variables.tf,data.tf,outputs.tf}`; fix `data.tf` remote-state paths (dev eks, region globals); set `namespace`, `cognito_auth_sudomian` (expect the `amazoncognito.com` fallback if the 4-per-region custom-domain cap is hit), `allow_self_signup = true`, `enable_mcp_client = true`; gitignored tfvars (23 secrets/URLs).
+- `envs/dev/individual-tenant/` (dev first): copy `envs/stage/qa-tenant/{main.tf,variables.tf,data.tf,outputs.tf}`; fix `data.tf` remote-state paths (dev eks, region globals); set `namespace`, `cognito_auth_sudomian` (expect the `amazoncognito.com` fallback if the 4-per-region custom-domain cap is hit), `allow_self_signup = true`, and `enable_helical_mcp = true` + `helical_mcp_public_url` to enable the existing OAuth-proxy client (§4.2); gitignored tfvars (23 secrets/URLs). Also set `COGNITO_PLATFORM_MCP_ALLOWED_CLIENT_IDS` to that proxy client's id in the configs repo.
 - Dashboard env for this tenant (configs repo `application.yaml`): `INDIVIDUAL_TENANT=true`, `COGNITO_ALLOWED_CLIENT_IDS`, `COGNITO_REQUIRED_SCOPE`, optional `FREE_MONTHLY_TOKENS`, `MAX_CONCURRENT_RUNS_PER_USER`.
 
-### 4.4 helical-mcp build + deploy (greenfield)
-- helical-mcp repo: add `buildspec.yml`; align `helical-mcp-cpl` source branch with reality (point at `main` or create `develop`).
-- Ensure ECR repo `mcp` exists (add to globals ECR TF if unmanaged).
-- configs repo: `envs/dev/mcp/application.yaml` — Deployment + Service + ALB Ingress (host e.g. `mcp-individual.helical-ai.bio`), **without** browser `auth-type: cognito` annotations; `DASHBOARD_URL` → the tenant dashboard. infra repo: `manifests/argocd/` root-app entry.
+### 4.4 Ingress posture for the MCP path
+No separate service to build or deploy — the endpoint ships with the dashboard, so there is no image, ECR repo, k8s manifest or ArgoCD app. The one carried-over constraint: whatever ingress fronts the MCP path must **not** carry the browser `alb.ingress.kubernetes.io/auth-type: cognito` annotations, because these are non-browser bearer clients that cannot complete a redirect login.
 
 ## Milestone 4b — GPU access strategy (AWS vs Nebius vs managed) — #1837
 
@@ -234,9 +241,9 @@ Per DESIGN §5.4. Not an ops detail: per-token pricing means we absorb all compu
 
 ## Milestone 6 — heli-plugin artifacts
 
-- `.mcp.json`: remote Streamable HTTP entry for deployed helical-mcp (STDIO scaffold retained for local dev).
-- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — sixteen tools, with the estimate-before-spend split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the deployed helical-mcp URL for production.
-- Settle the remaining publication items, both decisions rather than edits: the **privacy policy and terms URLs** (removed rather than guessed at — real paths needed), and whether **`capabilities: ["Read"]`** is accurate for a plugin that starts billable runs. Publisher, support, repository and **licence** metadata are done — the repo is **AGPL-3.0-or-later**, copied from the open-source `helical` package, so no end-user grant is outstanding.
+- `.mcp.json`: remote Streamable HTTP entry pointing at the dashboard's MCP endpoint (STDIO scaffold retained for local dev).
+- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — sixteen tools, with the estimate-before-spend split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the dashboard's MCP endpoint (M3) for production.
+- Settle the remaining publication items, all decisions rather than edits: the **privacy policy and terms URLs** (removed rather than guessed at — real paths needed), and whether **`capabilities: ["Read"]`** is accurate for a plugin that starts billable runs. Publisher, support, repository and **licence** metadata are done — the repo is **AGPL-3.0-or-later**, the same copyleft the open-source `helical` package carries, so no end-user grant is outstanding.
 
 ## Milestone 6c — Local execution skill (#1844)
 
@@ -254,7 +261,7 @@ Two distribution blockers with no owner. **No customer-facing support or ticketi
 
 ## Milestone 7 — End-to-end verification & dogfood
 
-Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → PKCE link from Claude Code/Codex → upload `.h5ad` → register → estimate → confirm → embedding DAG runs → status shows tokens + charge → artifact downloads → ledger/balance consistent. Second account proves isolation (all reads on user A's ids → identical 404 shape). DESIGN §12 is the test checklist; the confirmation-skipping-client scenario validates §6.1 mitigations.
+Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → add the proxy URL in Claude Code/Codex and complete the browser login (dynamic registration against the proxy, Authorization Code + PKCE to Cognito behind it) → upload `.h5ad` → register → estimate → confirm → embedding DAG runs → status shows tokens + charge → artifact downloads → ledger/balance consistent. Second account proves isolation (all reads on user A's ids → identical 404 shape). DESIGN §12 is the test checklist; the confirmation-skipping-client scenario validates §6.1 mitigations.
 
 ---
 
@@ -263,7 +270,7 @@ Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → PKCE link
 - **M0 first.** 0.1 unblocks anything touching the DAG contract; 0.2–0.4 unblock the edition split.
 - M2 schema → M1 routes (one dashboard PR train behind the edition manifest).
 - M4.1–4.2 (Cognito module changes, default-off) can land any time, subject to the two pairing constraints in M0.
-- M3 starts once M1 contracts exist (develops against `npm run dev`).
+- M3 (the MCP endpoint) needs M1.1's injectable registry and M1.3's subject scoping; the protocol layer can be built against a handful of read-only tools before the rest land.
 - M4.3–4.4, M5, M6, M6b follow; M7 last.
 - **M4b must be settled before the first paying user** — the spot default silently costs money on every interrupted run. The processor selection in M5 must be settled before M5 starts.
 
@@ -271,11 +278,10 @@ Acceptance run on `individual-tenant` (dev): hosted-UI self-signup → PKCE link
 
 | Repo | Gate |
 |---|---|
-| dashboard | `npm run typecheck && npm run lint && npm run test` (incl. new `tests/platform-mcp/*`; `projectScopeRule` clean); `npx prisma migrate dev` clean; `/dev/<table>` routes render |
-| helical-mcp | `uv run pytest`; local `MCP_TRANSPORT=streamable-http uv run helical-mcp` + `claude mcp add --transport http` with a dev bearer; exercise every tool |
+| dashboard | `npm run typecheck && npm run lint && npm run test` (incl. new `tests/platform-mcp/*`; `projectScopeRule` clean); `npx prisma migrate dev` clean; `/dev/<table>` routes render; `claude mcp add --transport http` against a local `npm run dev` with a Cognito bearer, then exercise every tool |
 | infra | `terraform plan` shows **no changes** for all existing tenants after module edits; then plan/apply the new tenant dir |
 | heli-plugin | `uv run python -m unittest discover -s plugins/helical-platform/tests`; skill + plugin validators; live `compute-embeddings` walkthrough |
 
 ## Explicitly deferred
 
-Fine-tuning and perturbation tools (DESIGN §7.0 stages 2–3; reuse this scaffolding + new `ModelPrice.operation` rows), final payment-processor decision, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).
+Fine-tuning (stage 2) and perturbation/ISP tools (stage 3, **tentative** — and it needs a metering decision first, since the platform already meters ISP for enterprise through `ProjectTypeQuota.isp_credits_*`; see DESIGN §7.0). Both reuse this scaffolding + new `ModelPrice.operation` rows, final payment-processor decision, free-credit launch sizing, tenant right-sizing (consumer-tier trim of JupyterHub/RDS/Airflow), dags-repo changes (none needed given deterministic tokens).

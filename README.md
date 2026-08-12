@@ -112,9 +112,17 @@ The checked-in `mcp/server.py` is the **local-development scaffold** and the ref
 the transport-safety controls any adapter must keep: HTTPS-only upstream, redirects
 disabled so a redirect cannot forward the bearer token, bounded arguments, a 2 MB response
 cap, a 30-second timeout, and errors surfaced as the API's short `error` string with its
-`detail` field dropped, since that can carry Zod issues or exception text. Production moves
-this to the in-cluster `helical-mcp` Streamable HTTP server with Cognito OAuth
-(Authorization Code + PKCE); see DESIGN.md §2 and §4.
+`detail` field dropped, since that can carry Zod issues or exception text. In production the MCP endpoint is served by the
+**dashboard itself** — a Streamable HTTP route in the same group as the tool routes.
+
+**Authentication follows the MCP OAuth proxy already provisioned per tenant**
+(`infra/modules/tenant/user_pool_client_mcp.tf`, enabled on stage), which is the source of
+truth: it presents the dynamic-registration surface MCP clients expect and Cognito does not,
+holds the one confidential client secret, and proxies Authorization Code + PKCE to the
+Cognito hosted UI. The dashboard verifies the resulting ordinary Cognito access token.
+
+Note the name collision: the `helicalAI/helical-mcp` **repo** is a superseded proof of
+concept, but "helical-mcp" in `infra` is that live proxy. See DESIGN.md §2, §3 and §4.
 
 ## Local development
 
