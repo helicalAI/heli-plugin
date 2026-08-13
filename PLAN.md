@@ -13,7 +13,7 @@ Decisions (from DESIGN.md, confirmed by the product owner):
 - Prepaid credits; **Stripe** top-up behind a provider interface (#1838, decided); free monthly grant supported in schema, enablement is a launch parameter.
 - **Two metering systems coexist, and they treat a deleted run oppositely** (DESIGN §5.6). ISP credits are *derived* from `run_meta`, so a delete erased the charge — hence #1927/#1978's soft delete. The money ledger is *recorded* in its own append-only table, so it does not need that protection and must not be built assuming it. They overlap only at `dag_id = 'perturbation'`, i.e. roadmap stage 3.
 - **Downloads return run outputs only, and uploaded inputs are never deleted** (#1972, DESIGN §5.7). Storage is therefore a monotonic, unpriced cost line that the token ledger cannot see, and a per-user cap is an open decision rather than a detail.
-- Confirmation is prompt-level (skill instructs the agent); no server-side `PendingConfirmation` on the MCP path. Mitigations: balance ceiling, per-user concurrent-run cap, estimate echoed at kickoff.
+- **Confirmation reuses the existing `PendingConfirmation` queue, carried over MCP** rather than rendered in a dashboard chat (DESIGN §6.1). `start_*` prices, enqueues and returns the confirmation; a B2C-only `resolve_confirmation` tool approves or rejects and returns the `run_id`. Supersedes the earlier prompt-level decision, whose only real blocker turned out to be the rendering. Mitigations still hold as second line: balance ceiling, per-user concurrent-run cap.
 
 Load-bearing repo facts (verified 2026-07-27):
 
@@ -38,8 +38,8 @@ Load-bearing repo facts (verified 2026-07-27):
 
 Two design sections were added after this plan was first written — §2.4 (extend the platform rather than build a lean service around the DAGs) and §2.5 (parametrising what each edition exposes). Both produce prerequisite work.
 
-### 0.1 Shared DAG-contract package — #1831
-Extract from the dashboard, ~450 lines of plain TypeScript: `constants/paths.ts` (drop its one type-only `Modality` import), `lib/models/classify.ts` verbatim, the DAG-contract half of `airflow-constants.ts` (split from its `lucide-react` icon map), and `embeddingsApiPayloadSchema` (relocate out of `src/app/agents/`). The `conf` contract is documented nowhere in the dags repo, so any second caller re-derives and drifts from it.
+### 0.1 Shared DAG-contract package — #1831 · **dropped, closed as not planned**
+It guarded against a second caller re-deriving the `conf` contract. There is no second caller: the B2C path reuses the existing implementation end to end (§2.3), so the drift it protects against cannot occur. The cost was also higher than assumed — 88 files import `airflow-constants`, 67 import `constants/paths`. The couplings it named (a `lucide-react` import in the DAG constants, a UI type in `paths.ts`) are real but only bite something outside Next importing them; split them out then, on their own merits.
 
 ### 0.2 Tenant capability manifest — #1832
 `src/config/tenants.ts` keyed by `NEXT_PUBLIC_NAMESPACE`, mapping each deployment to `edition: "b2b" | "b2c"` plus explicit per-tenant overrides. Fail at boot on an unknown namespace (the repo has no env validation today). Absorb the eight existing ad-hoc namespace checks, including the tenant array duplicated between `PlatformContext.tsx:154` and `airflow-services.ts:185`.
@@ -90,8 +90,8 @@ All target paths are relative to the B2C route group, `/api/platform-mcp`. Paths
 
 | Capability | Target path | Today | Work | Ticket |
 |---|---|---|---|---|
-| Compute embeddings | `POST /airflow/trigger/embedding` | ✅ `…/embedding/{conversationId}` | Port — drop the scope segment, execute directly instead of enqueuing, require `quote_id` | #1762 |
-| Fine-tune | `POST /airflow/trigger/finetuning` | ✅ `…/finetuning/{conversationId}` | Port — same three changes | #1762 |
+| Compute embeddings | `POST /airflow/trigger/embedding` | ✅ `…/embedding/{conversationId}` | Port — scope from the subject; **keeps** enqueuing, and returns the confirmation with the quote embedded | #1762 |
+| Fine-tune | `POST /airflow/trigger/finetuning` | ✅ `…/finetuning/{conversationId}` | Port — same treatment | #1762 |
 | List runs | `GET /airflow/runs` | ✅ same, but `projectId` required | Port — scope derived, so the parameter disappears | #1762 |
 | Run details (+ artifacts) | `GET /airflow/run-details/{runId}` | ✅ same | Port — already scopes from the run row | #1762 |
 
@@ -114,7 +114,7 @@ Cost estimation is **one endpoint per operation**, not one shared endpoint. The 
 Two invariants the paths encode, both asserted by tests in `heli-plugin`:
 
 - **No scope in any path, query, header, or body** (§2.3.1) — which is why the ported trigger paths lose their `{conversationId}` segment and `listDagRuns` loses `projectId`.
-- **`start_*` requires the `quote_id` its estimate returned**, and the estimate body is built by the same code as the trigger body, so a quote necessarily prices exactly what will run.
+- **`start_*` takes no `quote_id`.** It mints the quote itself and embeds it in the confirmation it returns, so the quote necessarily prices exactly what will run and a caller cannot pair one run with another's price (DESIGN §6.1). The quote is fixed at request time and honoured on approval; the confirmation TTL and the quote window are the same number, so an approval can never land on a stale price.
 
 Two things this audit surfaced that were not previously tracked:
 
@@ -161,8 +161,10 @@ injected seam, that is the signal to widen the seam, not to fork the handler.
 - `listDatasets` / `getDataset` — port of `agentcore-mcp/data/` handlers, subject-project-scoped.
 
 ### 1.5 Embedding-run tools
-- `estimateEmbeddingRun` — calls M2 estimator; returns tokens, price, assumptions, `quote_id`, expiry.
-- `startEmbeddingRun` — `requireSubjectProject` → M2 `debitForRun` (atomic) → `triggerValidated(...)` with `investigationId: false`, `dagRunId = generateDagRunId("plugin")`; enforces `MAX_CONCURRENT_RUNS_PER_USER`; response echoes the estimate. No `PendingConfirmation`.
+- `estimateEmbeddingRun` — calls M2 estimator; returns tokens, price, assumptions, expiry. Price discovery only: it is no longer what fixes the price, because the quote that gets charged is the one `startEmbeddingRun` embeds in its confirmation.
+- `startEmbeddingRun` — `requireSubjectProject` → price and write an `EstimateQuote` → `requestConfirmationService(...)` with the quote and the replayable launch in `payload`. **Starts nothing, charges nothing**, and returns the confirmation: id, quote, resolved parameters, phrase, expiry. Safe to retry — a repeat costs another quote, not another run.
+- `resolveConfirmation` — approve or reject. Approval runs inside the existing `resolveConfirmationService` claim (`status: pending` guard, proceed only when exactly one row updated), so concurrent approvals launch once; `executeConfirmation` then does M2 `debitForRun` and `triggerValidated(...)` in one transaction and returns the `run_id`. Enforces `MAX_CONCURRENT_RUNS_PER_USER` at approval, not at request. **Registered on `platform-mcp` only** — on the enterprise surface a human resolves in the dashboard, and an agent able to approve its own request would defeat that queue.
+- **Schema change this needs**: `PendingConfirmation.conversationId` is `NOT NULL` and cascades from `Conversation`, which a B2C caller has none of. It becomes nullable, with a subject-scoped form of `uq_pending_confirmation_live` and the scope injected the way `ProjectSource` is. Note `target` must include the model, or a second run on the same dataset is refused by the live-uniqueness index for the wrong reason.
 - `listEmbeddingRuns` / `getRunStatus` — `runs/list.ts` + `pollActiveStatus`; `getRunStatus` invokes M2 `settleRun` when it observes a terminal state; terminal responses include tokens + charge.
 
 ### 1.6 Results tools

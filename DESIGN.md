@@ -90,7 +90,7 @@ What B2C sheds is the *UI-shaped* assumptions, because a B2C user never opens th
 - each tool maps to an existing dashboard route or shared service (`src/trpc/routers/**` service modules, `agentcore-mcp` handlers), preserving its validation, Zod contract, and policy behavior;
 - **every ported or new service re-checks membership itself.** Today, shared services take `(prisma, args)` and rely on the calling procedure/route for authorization; that caveat is retired. The subject→project resolution and the membership check move into the service, so no caller can reach data by skipping the gate;
 - `conversationId`-based scoping (used by the chat-bound `agentcore-mcp` routes such as `triggerEmbedding` and `listModels`) is replaced by **subject-derived project resolution** — the MCP caller has no dashboard conversation;
-- **the approval queue is replaced by direct execution** (§6.1), which is what makes the `triggerValidated` helper — present in `agentcore-mcp/airflow/trigger/_helpers.ts` today with zero callsites — finally the one that gets used;
+- **the approval queue is reused, with the approval carried over MCP instead of rendered in a dashboard chat** (§6.1) — which is what finally gives the `triggerValidated` helper (present in `agentcore-mcp/airflow/trigger/_helpers.ts` with zero callsites) its caller, from inside `executeConfirmation`;
 - **project scope leaves the URL entirely** (§2.3.1);
 - the tools `agentcore-mcp` simply lacks are added once, in the shared layer, and registered only on the surfaces that should have them: the cost estimate, the balance read, dataset upload and registration, and artifact download (§8.2 lists the full gap);
 - generic passthrough, raw queries, project CRUD, and collaboration primitives are omitted;
@@ -115,7 +115,7 @@ That is the point. A transmitted identifier is an input to be validated; a deriv
 Consequences to accept deliberately:
 
 - **A multi-project user cannot be served by this surface.** That is consistent with §2.2 and §2.5, and if it is ever needed it is a new design decision with its own security review — not a header bolted onto this one. Reintroducing a transmitted scope would reintroduce the validation burden it was removed to avoid.
-- **There is no approval-queue concept.** `getConfirmationStatus` exists on `agentcore-mcp` only because the queue is conversation-bound; with direct execution (§6.1) there is nothing to poll, and the tool is not ported.
+- **The approval queue is shared, and B2C needs one tool the enterprise surface lacks.** `getConfirmationStatus` polls today but cannot *resolve* — the dashboard dialog does that over tRPC. B2C has no dialog, so the surface adds a confirmation tool that approves or rejects and returns the `run_id` (§6.1). Registering it on the enterprise surface too would let an agent approve its own destructive request there, which is precisely what that queue exists to prevent, so it is B2C-only — an exposure-filter decision, not a code fork.
 - **Four of today's routes cannot be called without scope** — `listModels`, both triggers, and `getConfirmationStatus` — so those tools are unusable against `agentcore-mcp` until the port lands. Routes that already scope from the resource or the caller's memberships (`data`, `run-details`, `files`, `s3`, `umaps`) work in both worlds.
 
 Implementation note for the port: because scope stops being a Zod-validated path or query field, it can no longer be plumbed per route. It belongs in the shared resolve step alongside `authenticateUser` — the same place `requireSubjectProject` lives — which is also what stops a new route from forgetting it.
@@ -509,13 +509,31 @@ Do not use an OAuth challenge as a checkout redirect; do not rely on HTTP `402` 
 
 The dashboard's chat surface gates expensive launches through a server-side approval queue: every `trigger*` route calls `enqueueDagLaunch`, returns `{status: "pending_approval", confirmation_id}`, and nothing executes until a human approves it in the dashboard chat.
 
-**That queue is not merely bypassed here — it is unavailable.** It resolves the project from a `conversationId`, and it renders the approval in a dashboard chat. A B2C user has no conversation and never opens the dashboard UI beyond the four account screens (§2.5). An approval queued for them would render in a screen they will never look at, so the run would simply never start. Confirmation must therefore happen in the client the user is actually in — the CLI or chat app hosting the plugin:
+**That queue is reused, not bypassed.** An earlier draft called it unavailable, on the grounds that it resolves scope from a `conversationId` and renders the approval in a dashboard chat the B2C user never opens. The rendering is the only part that was actually a blocker, and it is not intrinsic: the queue is a server-side state machine, and the dashboard dialog is merely one client of it. Carry the approval over MCP instead and the whole mechanism transfers.
 
-- MCP tools execute directly; `start_embedding_run` launches the DAG without a server-side approval step;
-- the **skill instructs the agent** to present the estimate (tokens, price, balance impact) and obtain the user's explicit confirmation before calling `start_embedding_run`;
-- server-side mitigations bound the blast radius of a client that skips confirmation: credit is debited at launch (§5.1), so total exposure can never exceed the balance however many runs are fired concurrently; a per-user concurrent-run cap limits queue flooding; and the estimate is echoed in every kickoff response so the user sees the cost even if the agent never asked.
+**The flow, and it is one extra round trip:**
 
-This is an accepted risk, revisit if the surface ever exposes destructive operations (nothing in the initial allowlist is destructive).
+1. The agent calls `start_embedding_run` with the run's parameters. The server prices it, writes an `EstimateQuote`, and enqueues a `PendingConfirmation` whose `payload` carries both the replayable launch and the quote.
+2. **Nothing has started.** The call returns the confirmation — its id, the quote (tokens, price, resulting balance), the resolved run parameters, the phrase to echo, and the expiry.
+3. The agent presents that to the user and obtains a decision.
+4. The agent calls the confirmation tool with `approve` or `reject`.
+5. On approve the server debits and dispatches in one transaction and returns the **`run_id`**; on reject it returns an acknowledgement and nothing was charged.
+
+What this buys, beyond matching the enterprise surface's semantics:
+
+- **A mismatched quote stops being expressible.** The agent never chooses a quote — it approves a confirmation that already embeds one. The failure mode of quoting run A and starting run B with A's price cannot be constructed at the call site, which is a stronger guarantee than a service-layer check and is where §5.1's `uq_credit_ledger_quote_entry` becomes a backstop rather than the primary defence.
+- **Exactly-once execution is already solved.** `resolveConfirmationService` claims the row with a `status: pending` guard and proceeds only when it updated exactly one — so two concurrent approvals launch one run. Expiry, the `failed` state when execution errors, and the safe default (anything that is not `approve` does not execute) come with it.
+- **The server holds a record of the decision**, with a resolver, a timestamp and a TTL. Prompt-level confirmation left no trace at all.
+- **The billing seam lands where it belongs.** The debit joins `executeConfirmation`, which is the shared transaction that dispatches — a no-op on the enterprise surface, the real debit on B2C, rather than a branch inside `triggerValidated` (§2.3).
+
+**What the reuse costs, stated plainly, because none of it is free:**
+
+- **`PendingConfirmation.conversationId` is `NOT NULL` and cascades from `Conversation`.** A B2C caller has none. This is the one structural change: the column becomes nullable and the live-uniqueness index gains a subject-scoped form, with the scope injected exactly as `ProjectSource` is (§2.3) — conversation for the enterprise surface, verified subject for B2C.
+- **`uq_pending_confirmation_live` is keyed on `(scope, operationType, target)`,** so a second request against the same target while one is pending is refused rather than queued. For duplicate-spend protection that is the behaviour we want; it also means "run the same dataset against two models" needs `target` to include the model, or the second request is rejected for the wrong reason.
+- **The confirmation TTL and the quote window must be one number.** They are two expiries over the same promise, and if the confirmation outlives the quote an approval can land on a price that has since changed.
+- **The human is still asserted by the agent.** The server cannot prove one was asked. This is strictly better than prompt-level confirmation — there is a record, a single use, an expiry, and a phrase the agent must echo back, so it cannot approve a request it never received — but it is not the dashboard's typed-phrase guarantee, and it should not be described as one.
+
+The server-side mitigations from the previous design still hold and are now belt-and-braces rather than the only line: credit is debited before dispatch (§5.1), so exposure cannot exceed the balance however many runs are fired concurrently, and a per-user concurrent-run cap limits queue flooding.
 
 ## 7. MCP tool contract
 
@@ -550,7 +568,9 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 ### c. Embedding runs
 
 - **`estimate_embedding_run`** — the estimator (§5.2).
-- **`start_embedding_run`** — port of `triggerEmbedding` (`agentcore-mcp/airflow/trigger/embedding/`), with four deltas: project from subject instead of `conversationId`; direct execution instead of `pending_approval` (§6.1); balance check + optional `quote_id` binding before launch; and **`node_type`/`num_devices` are removed from the input** — the platform selects the compute profile the model's coefficient was priced against (§5.4), because under per-token pricing a caller choosing more or bigger GPUs would multiply our cost at a fixed price. Returns `run_id` plus the estimate echo.
+- **`start_embedding_run`** — the same `triggerEmbedding` handler (`agentcore-mcp/airflow/trigger/embedding/`) with three injected differences: project from subject instead of `conversationId`; **`node_type`/`num_devices` removed from the input**, because under per-token pricing a caller choosing more or bigger GPUs would multiply our cost at a fixed price and the platform must select the profile the coefficient was measured against (§5.4); and a quote minted server-side and embedded in the confirmation it returns. **It does not return a `run_id`** — it returns a pending confirmation carrying the quote and the resolved parameters (§6.1). The `run_id` comes from approving it.
+- **`resolve_confirmation`** — approve or reject a pending confirmation, echoing the phrase it returned. Approving debits and dispatches in one transaction and returns the **`run_id`**; rejecting acknowledges and charges nothing. This is the one tool the enterprise surface deliberately does **not** register: there, resolution is a human act in the dashboard dialog, and letting an agent approve its own request would defeat the queue's purpose. Same handler, different exposure filter (§2.3).
+- **`get_confirmation_status`** — already exists on the enterprise surface and registers here unchanged; polls `pending` / `executed` / `rejected` / `expired` / `failed`. Useful when a client loses the response to `resolve_confirmation` and must find out whether the run started, which it must never resolve twice to discover.
 - **`list_embedding_runs`** / **`get_run_status`** — port of `listDagRuns` / run-details, including progress, task state, and (on completion) actual tokens consumed and the ledger charge.
 
 ### d. Results
@@ -558,7 +578,7 @@ The first ported operation is **computing embeddings**, end to end. Four tool gr
 - **`list_results`** / **`search_results`** — completed runs with their artifacts, filterable by model, dataset, date, and free-text label.
 - **`download_result`** — short-lived presigned GET URL for a named artifact (embedding matrices, UMAPs). URLs are subject-bound and carry no reusable credentials. **It returns run outputs only: uploaded input data is never downloadable** (§5.7), and that is a property of which keys the tool will sign, not a filter applied to a listing. The same rule binds `read_file` and `list_s3_files`, which today walk the project prefix and would otherwise be the way around it.
 
-Cross-cutting: **no tool takes a project, conversation, or owner identifier, and none is transmitted on the wire** — scope is derived from the verified subject and nothing else (§2.3.1). All tools are otherwise typed with the same Zod contracts as their dashboard sources; read tools declare read-only/idempotent annotations; `start_embedding_run` is the single billable, non-idempotent operation. Ownership failures and nonexistence are indistinguishable. Account-transparency tools (`get_balance`, `get_usage`) are a small, recommended addition to the allowlist.
+Cross-cutting: **no tool takes a project, conversation, or owner identifier, and none is transmitted on the wire** — scope is derived from the verified subject and nothing else (§2.3.1). All tools are otherwise typed with the same Zod contracts as their dashboard sources; read tools declare read-only/idempotent annotations. The single billable, non-idempotent operation is **approving a confirmation**, not requesting one: `start_embedding_run` prices, records and returns: it starts nothing and charges nothing, so a retried request costs the user only another quote. That split is why the run tools can be retried safely and why the confirmation row, not the request, carries the exactly-once guarantee (§6.1). Ownership failures and nonexistence are indistinguishable. Account-transparency tools (`get_balance`, `get_usage`) are a small, recommended addition to the allowlist.
 
 ### 7.2 Local execution with the open-source package
 
@@ -651,7 +671,7 @@ Three skills. Two drive the hosted tool surface; the third drives the user's own
 
 1. Select a catalogue dataset with `list_datasets` / `get_dataset`. There is no upload yet; say so plainly if the user has their own file.
 2. Choose a model with `list_models`. A bare base-model name must be a known identifier or the API returns 400; a fine-tuned model uses its `<base>_v<n>` name.
-3. `estimate_embedding_run` — free, starts nothing — then **show the tokens and the price and get an explicit yes**, then `start_embedding_run` with the returned `quote_id`. The run tool will not accept a call without one. `batch_size` is required despite the route's own description saying otherwise, and `modalities` must include `"sc"` for TranscriptFormer models or the run fails at execution time.
+3. `start_embedding_run` returns a **pending confirmation** carrying the quote and the resolved parameters — it starts nothing. **Show the tokens and the price and get an explicit yes**, then approve the confirmation to receive the `run_id` (§6.1). `estimate_embedding_run` remains available for price discovery before committing to a request, but it is no longer what fixes the price: the quote embedded in the confirmation is. `batch_size` is required despite the route's own description saying otherwise, and `modalities` must include `"sc"` for TranscriptFormer models or the run fails at execution time.
 4. Follow the run with `list_runs` and `get_run_details`. Each call to `start_*` begins a separate run, so check before retrying a timeout.
 5. Report outputs from `artifacts[]`. `read_file` is UTF-8 text only, capped at 1 MiB, so a binary `.npy` matrix can be located but not inspected — the skill says so instead of implying otherwise. UMAPs come from `list_umaps` / `get_umap` and are large enough to summarise rather than echo.
 
