@@ -82,9 +82,7 @@ All target paths are relative to the B2C route group, `/api/platform-mcp`. Paths
 
 | Capability | Target path | Today | Work | Ticket |
 |---|---|---|---|---|
-| **Estimate an embedding run** | `POST /airflow/estimate/embedding` **(proposed)** | ❌ | **New** — same body as the trigger, returns tokens, price, assumptions, `quote_id` | #1762, #1766 |
-| **Estimate a fine-tuning run** | `POST /airflow/estimate/finetuning` **(proposed)** | ❌ | **New** — separate endpoint; epochs multiply the count, so the formula and inputs differ | #1766 |
-| *(Estimate a perturbation run)* | `POST /airflow/estimate/perturbation` | ❌ | Roadmap stage 3 (§7.0), priced by genes perturbed | later |
+| ~~Estimate a run~~ | — | ❌ | **Dropped.** `start_*` mints the quote and returns it in the confirmation, so a separate estimate tool prices something the caller cannot then spend. The estimator stays as an internal service (DESIGN §5.2) | #1766 |
 
 ### Runs
 
@@ -161,7 +159,7 @@ injected seam, that is the signal to widen the seam, not to fork the handler.
 - `listDatasets` / `getDataset` — port of `agentcore-mcp/data/` handlers, subject-project-scoped.
 
 ### 1.5 Embedding-run tools
-- `estimateEmbeddingRun` — calls M2 estimator; returns tokens, price, assumptions, expiry. Price discovery only: it is no longer what fixes the price, because the quote that gets charged is the one `startEmbeddingRun` embeds in its confirmation.
+- **No `estimateEmbeddingRun` tool.** The estimator is an internal service called by `startEmbeddingRun`; exposing it separately would offer a price the caller cannot act on, and a second way to produce the number that gets charged.
 - `startEmbeddingRun` — `requireSubjectProject` → price and write an `EstimateQuote` → `requestConfirmationService(...)` with the quote and the replayable launch in `payload`. **Starts nothing, charges nothing**, and returns the confirmation: id, quote, resolved parameters, phrase, expiry. Safe to retry — a repeat costs another quote, not another run.
 - `resolveConfirmation` — approve or reject. Approval runs inside the existing `resolveConfirmationService` claim (`status: pending` guard, proceed only when exactly one row updated), so concurrent approvals launch once; `executeConfirmation` then does M2 `debitForRun` and `triggerValidated(...)` in one transaction and returns the `run_id`. Enforces `MAX_CONCURRENT_RUNS_PER_USER` at approval, not at request. **Registered on `platform-mcp` only** — on the enterprise surface a human resolves in the dashboard, and an agent able to approve its own request would defeat that queue.
 - **Schema change this needs**: `PendingConfirmation.conversationId` is `NOT NULL` and cascades from `Conversation`, which a B2C caller has none of. It becomes nullable, with a subject-scoped form of `uq_pending_confirmation_live` and the scope injected the way `ProjectSource` is. Note `target` must include the model, or a second run on the same dataset is refused by the live-uniqueness index for the wrong reason.
