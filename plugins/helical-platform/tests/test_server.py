@@ -17,7 +17,13 @@ SPEC.loader.exec_module(server)
 ENV = {"HELICAL_API_BASE_URL": "https://dash.example.test", "HELICAL_API_TOKEN": "secret"}
 UUID_A = "11111111-2222-3333-4444-555555555555"
 UUID_B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-LAUNCHING = {"start_embedding_run", "start_finetuning_run"}
+# Everything that is not a pure read. Note `start*` is in here but does NOT launch:
+# it prices and queues a confirmation. Only resolveConfirmation spends credit.
+NOT_READ_ONLY = {
+    "startEmbeddingRun", "startFinetuningRun",
+    "initiateDatasetUpload", "completeDatasetUpload", "abortDatasetUpload", "registerDataset",
+    "resolveConfirmation",
+}
 
 
 class FakeResponse:
@@ -49,7 +55,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_triggers_are_not_read_only_and_nothing_is_destructive(self):
         for tool in server.TOOLS:
-            expected_read_only = tool["name"] not in LAUNCHING
+            expected_read_only = tool["name"] not in NOT_READ_ONLY
             self.assertEqual(tool["annotations"]["readOnlyHint"], expected_read_only, tool["name"])
             self.assertFalse(tool["annotations"]["destructiveHint"], tool["name"])
 
@@ -185,7 +191,7 @@ class RoutingTests(unittest.TestCase):
     def test_embedding_trigger_posts_to_an_unscoped_path(self):
         _, request = call(
             server._start_embedding_run,
-            {"datasetId": UUID_B, "model": "scgpt", "batch_size": 8, "quote_id": "q-1"},
+            {"datasetId": UUID_B, "model": "scgpt", "batch_size": 8},
         )
         self.assertEqual(request.method, "POST")
         self.assertEqual(
@@ -195,7 +201,7 @@ class RoutingTests(unittest.TestCase):
         body = json.loads(request.data)
         self.assertEqual(
             body,
-            {"datasetId": UUID_B, "model": "scgpt", "batch_size": 8, "quote_id": "q-1"},
+            {"datasetId": UUID_B, "model": "scgpt", "batch_size": 8},
         )
 
     def test_run_details_uses_its_real_path(self):
@@ -313,33 +319,28 @@ class EstimateTests(unittest.TestCase):
         "num_trainable_layers": 2, "registered_model_name": "scgpt_custom",
     }
 
-    def test_each_operation_has_its_own_estimate_endpoint(self):
-        _, emb = call(server._estimate_embedding_run, self.EMB)
-        self.assertTrue(emb.full_url.endswith("/airflow/estimate/embedding"))
-        _, ft = call(server._estimate_finetuning_run, self.FT)
-        self.assertTrue(ft.full_url.endswith("/airflow/estimate/finetuning"))
+    def test_a_run_request_does_not_accept_a_quote(self):
+        """The confirmation flow mints the quote server-side and embeds it in the
+        confirmation, so there is no caller-supplied quote to mismatch. A schema that
+        still accepted one would let an agent pair run A with run B's price."""
+        for name in ("startEmbeddingRun", "startFinetuningRun"):
+            with self.subTest(tool=name):
+                tool = next(x for x in server.TOOLS if x["name"] == name)
+                self.assertNotIn("quote_id", tool["inputSchema"]["properties"], name)
+                self.assertNotIn("quote_id", tool["inputSchema"]["required"], name)
 
-    def test_an_estimate_prices_exactly_what_the_run_would_do(self):
-        """Same body as the trigger, minus the quote — so the quote cannot drift."""
-        _, estimate = call(server._estimate_embedding_run, self.EMB)
-        _, run = call(server._start_embedding_run, dict(self.EMB, quote_id="q-1"))
-        priced, started = json.loads(estimate.data), json.loads(run.data)
-        self.assertEqual(started.pop("quote_id"), "q-1")
-        self.assertEqual(priced, started)
+    def test_a_run_request_starts_nothing_and_only_approval_launches(self):
+        """start* is annotated as a write but not as the launch; resolveConfirmation is
+        the billable call. Agent hosts read these hints to decide what to auto-approve,
+        so 'stages a request' and 'spends money' must not look alike."""
+        starts = [x for x in server.TOOLS if x["name"].startswith("start")]
+        self.assertTrue(starts)
+        for tool in starts:
+            self.assertFalse(tool["annotations"]["readOnlyHint"], tool["name"])
+        resolve = next(x for x in server.TOOLS if x["name"] == "resolveConfirmation")
+        self.assertFalse(resolve["annotations"]["readOnlyHint"])
+        self.assertFalse(resolve["annotations"]["idempotentHint"])
 
-    def test_estimates_never_carry_a_quote(self):
-        _, request = call(server._estimate_finetuning_run, dict(self.FT, quote_id="q-1"))
-        self.assertNotIn("quote_id", json.loads(request.data))
-
-    def test_a_run_cannot_start_without_a_quote(self):
-        for handler, args in ((server._start_embedding_run, self.EMB),
-                              (server._start_finetuning_run, self.FT)):
-            with self.subTest(handler=handler.__name__):
-                with self.assertRaisesRegex(server.ToolError, "quote_id is required"):
-                    handler(args)
-
-
-class ErrorMappingTests(unittest.TestCase):
     def _error(self, code, body):
         return server._http_error(
             HTTPError("https://dash.example.test", code, "", {}, io.BytesIO(json.dumps(body).encode()))

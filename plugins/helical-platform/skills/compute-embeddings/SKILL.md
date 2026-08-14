@@ -18,7 +18,7 @@ remaining sections document intended future behavior only.
 
 Turns a catalogue dataset plus a foundation model into an embedding matrix and a UMAP.
 
-**The one thing to understand before starting:** `start_embedding_run` consumes real
+**The one thing to understand before starting:** `startEmbeddingRun` consumes real
 compute and starts immediately. Nothing downstream will ask the user to confirm — there is
 no approval screen, because a B2C user's platform UI is four account screens — sign up,
 sign in, top up, check balance — and nothing else. **You are the
@@ -30,21 +30,24 @@ a project or conversation identifier.
 
 ## 1. Select the dataset
 
-`list_datasets({ name?, organism?, tissue?, disease?, limit? })` — `name` and `author`
+`listDatasets({ name?, organism?, tissue?, disease?, limit? })` — `name` and `author`
 match as case-insensitive substrings; `organism`, `tissue` and `disease` match an exact
 element of the dataset's array field, so `organism: "human"` only matches if that exact
 string is present. Note `total` is the count across all pages, not the rows returned.
 
-`get_dataset({ id })` for the full record, including `cellCount` and `geneCount` — worth
+`getDataset({ id })` for the full record, including `cellCount` and `geneCount` — worth
 reporting, because run time scales with them.
 
-There is **no upload tool**: datasets must already exist in the catalogue. If the user has
-their own `.h5ad`, say plainly that this surface cannot ingest it yet, and do not send them
-to the dashboard — a B2C account has no dataset screen to upload it through.
+To bring in a new `.h5ad`: `initiateDatasetUpload({ fileName, sizeBytes })` returns an
+`uploadId`, an `s3Key` and presigned `parts[]`; PUT each part's bytes to its own `url`,
+collect the ETags, then `completeDatasetUpload({ uploadId, s3Key, parts })` and
+`registerDataset({ s3Key, fileName, name, externalId, ... })`. The file is not a dataset
+until it is registered. `abortDatasetUpload({ uploadId, s3Key })` discards an abandoned
+upload — call it rather than leaving parts staged.
 
 ## 2. Choose a model
 
-`list_models({ modelType?, status? })` — promoted models by default; pass
+`listModels({ modelType?, status? })` — promoted models by default; pass
 `status: "all"` to see unpromoted candidates too. Pass the returned **`name`** as `model`.
 
 A bare base-model name is accepted only if it is a known identifier (`scgpt`,
@@ -53,22 +56,31 @@ its registered `<base>_v<n>` name, or give `model` plus `model_version`. An unre
 bare name is rejected with a 400 rather than guessed at, and a promoted model belonging to
 another workspace returns 403.
 
-## 3. Price it, then confirm, then run
+## 3. Request it, show the price, then approve
 
 ```
-estimate_embedding_run({ datasetId, model, batch_size, modalities?, model_version? })
+startEmbeddingRun({ datasetId, model, batch_size, modalities?, model_version? })
 ```
 
-Free, starts nothing, safe to call repeatedly. Returns the token count, the price, the
-assumptions behind it, and a `quote_id`. **Show the user the tokens and the price**, and
-get an explicit yes. Then:
+**This starts nothing and costs nothing.** It prices the request and returns a pending
+confirmation: an `id`, the quote (tokens, price, resulting balance) and the parameters as
+the server resolved them. Safe to call again — a repeat costs another quote, not another
+run.
+
+**Show the user the tokens and the price**, and get an explicit yes. Then:
 
 ```
-start_embedding_run({ ...the same arguments, quote_id })
+resolveConfirmation({ id, decision: "approve" })
 ```
 
-The quote is what fixes the price, and the run tool will not accept a call without one.
-Change any argument and the quote no longer applies — estimate again.
+That is the billable call, and the only one. It debits the quoted price, launches, and
+returns the `run_id`. `decision: "reject"` discards the request and charges nothing.
+
+You never choose or pass a quote — the confirmation carries the one that will be charged,
+so the price you showed is the price billed. Confirmations expire; if one does, request
+again. If you lose the response to `resolveConfirmation`, call
+`getConfirmationStatus({ id })` to find out whether the run started — **never approve twice
+to check**.
 
 - **`batch_size` is required.** The API's own description says it can be omitted; it
   cannot — omitting it is a 400. 8–32 is a reasonable starting range.
@@ -80,28 +92,29 @@ Do not batch several runs behind one confirmation, and do not treat an earlier "
 good" about the plan as approval for the run itself.
 
 Each call starts a separate run: a retry after a timeout may duplicate work, so check
-`list_runs` before re-issuing.
+`listDagRuns` before re-issuing.
 
 ## 4. Follow it through
 
-`list_runs({ dagIds: ["embedding"], state: ["running"] })` to find the run, then
-`get_run_details({ runId })` until it reaches a terminal state. Runs take minutes to hours;
+`listDagRuns({ dagIds: ["embedding"], state: ["running"] })` to find the run, then
+`getRunDetails({ runId })` until it reaches a terminal state. Runs take minutes to hours;
 poll at a sensible interval and keep the user informed rather than going silent.
 
 ## 5. Report the outputs
 
-`get_run_details({ runId })` returns `artifacts[]` with `artifact_type`, `display_name`
+`getRunDetails({ runId })` returns `artifacts[]` with `artifact_type`, `display_name`
 and `s3_key`.
 
-- `list_files({ path })` on the run's output directory to see what was produced.
-- `list_s3_files({ path? })` lists an object-storage prefix **non-recursively**, across the
+- `listFiles({ path })` on the run's output directory to see what was produced.
+- `listS3Files({ path? })` lists an object-storage prefix **non-recursively**, across the
   caller's projects. Use it when an `s3_key` from `artifacts[]` needs to be located or
-  confirmed to exist; use `list_files` for walking a run's output directory.
-- `read_file({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
-  matrix is a binary `.npy` — it cannot be read through this tool. Report its path and say
-  plainly that this surface has no way to hand over the bytes yet; do not pretend to have
-  inspected it, and do not point at a dashboard the user cannot reach.
-- For the UMAP, `list_umaps({ datasetId })` then `get_umap({ runId })` returns parsed
+  confirmed to exist; use `listFiles` for walking a run's output directory.
+- `readFile({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
+  matrix is a binary `.npy` — it cannot be read through this tool. Hand it over with
+  `downloadArtifact({ artifactId })`, taking the id from `getRunDetails`, and give the user
+  the returned `url` and `fileName` (`curl -o '<fileName>' '<url>'`). Do not pretend to have
+  inspected the file. Uploaded inputs have no artifact id and are not downloadable.
+- For the UMAP, `listUmaps({ datasetId })` then `getUmap({ runId })` returns parsed
   coordinates and labels. The payload can be very large: summarise it, do not echo it.
 
 ## Hand-off

@@ -26,18 +26,19 @@ plugins/helical-platform/
 
 ## Tool surface
 
-Sixteen tools. The preview advertises their intended schemas but does not execute them.
-Tool shapes follow the dashboard's `agentcore-mcp` routes — paths, parameter names and
-response fields are taken from them — but the future target is the B2C port of those routes.
+Twenty-one tools. The preview advertises their intended schemas but does not execute them.
+Names are the hosted surface's `operationId`s, lowerCamelCase and unique across the
+surface, so what an agent learns here is what the real server will answer to.
 
 | Group | Tools |
 |---|---|
-| Models | `list_models` |
-| Datasets | `list_datasets`, `get_dataset`, `get_dataset_columns`, `get_dataset_obs_values` |
-| Estimates (free) | `estimate_embedding_run`, `estimate_finetuning_run` |
-| Runs (**billable, start immediately**) | `start_embedding_run`, `start_finetuning_run` |
-| Runs | `list_runs`, `get_run_details` |
-| Outputs | `list_files`, `read_file`, `list_s3_files`, `list_umaps`, `get_umap` |
+| Models | `listModels` |
+| Datasets | `listDatasets`, `getDataset`, `getDatasetColumns`, `getDatasetObsValues` |
+| Ingest | `initiateDatasetUpload`, `completeDatasetUpload`, `abortDatasetUpload`, `registerDataset` |
+| Runs (**request — prices and queues, starts nothing**) | `startEmbeddingRun`, `startFinetuningRun` |
+| Approval (**`resolveConfirmation` is the only billable call**) | `getConfirmationStatus`, `resolveConfirmation` |
+| Runs | `listDagRuns`, `getRunDetails` |
+| Outputs | `downloadArtifact`, `listFiles`, `readFile`, `listS3Files`, `listUmaps`, `getUmap` |
 
 ### Two surfaces, one client
 
@@ -58,26 +59,26 @@ verified subject. A transmitted identifier is an input to be validated; a derive
 not an input at all, so the class of bug where a caller names someone else's project does
 not exist. Tests assert that no schema exposes scope and that no request carries it.
 
-**The cost:** the routes that still want scope in the URL — `list_models` and both
+**The cost:** the routes that still want scope in the URL — `listModels` and both
 triggers — will fail against `agentcore-mcp` until the port lands. Datasets, run details,
 files, S3 and UMAPs scope from the resource or the caller's memberships and work against
 either. `HELICAL_API_ROOT` selects the route group (default `/api/platform-mcp`).
 
-There is also no `get_confirmation_status`: the approval queue is conversation-bound, and
-with direct execution there is nothing to poll.
+`getConfirmationStatus` and `resolveConfirmation` are both here: the approval queue is
+reused, with the approval carried over MCP rather than rendered in a dashboard chat.
 
-The approval queue matters for more than convenience: it renders in a dashboard chat a B2C
-user never opens, so a run queued for them would never start. That is why DESIGN.md §6.1
-moves confirmation into the client the user is actually in.
+The approval queue is why the flow has two steps. `startEmbeddingRun` prices the request
+and returns a pending confirmation; `resolveConfirmation` approves it, debits the quoted
+price and returns the run id. DESIGN.md §6.1 explains why the queue is reused rather than
+replaced — only its *rendering* in a dashboard chat was ever the obstacle for B2C.
 
-### Estimate before spend
+### Request, then approve
 
-One estimate endpoint **per operation**, because the token formula differs — rows × width ×
-coefficient for embedding, × epochs for fine-tuning. Estimates are free, read-only, and
-return a `quote_id` that the matching `start_*` tool **requires**, so a run cannot be
-started without having been priced first. Changing any argument invalidates the quote.
-That makes DESIGN.md §6.1's estimate-before-spend rule structural rather than advisory: a
-test asserts an estimate's body is byte-identical to the run it prices, minus the quote.
+A run request is free, safe to retry, and starts nothing; approving it is the only billable
+call. The quote is minted server-side and carried in the confirmation, so the caller never
+picks one — which makes "the price shown is the price billed" structural rather than a rule
+the agent has to follow, and makes pairing one run with another run's price impossible to
+express.
 
 ### Not available on `agentcore-mcp` yet
 

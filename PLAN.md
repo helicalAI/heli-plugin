@@ -119,7 +119,7 @@ Cost estimation is **one endpoint per operation**, not one shared endpoint. The 
 Two invariants the paths encode, both asserted by tests in `heli-plugin`:
 
 - **No scope in any path, query, header, or body** (§2.3.1) — which is why the ported trigger paths lose their `{conversationId}` segment and `listDagRuns` loses `projectId`.
-- **`start_*` takes no `quote_id`.** It mints the quote itself and embeds it in the confirmation it returns, so the quote necessarily prices exactly what will run and a caller cannot pair one run with another's price (DESIGN §6.1). The quote is fixed at request time and honoured on approval; the confirmation TTL and the quote window are the same number, so an approval can never land on a stale price.
+- **A run request carries no caller-supplied quote.** It mints the quote itself and embeds it in the confirmation it returns, so the quote necessarily prices exactly what will run and a caller cannot pair one run with another's price (DESIGN §6.1). The quote is fixed at request time and honoured on approval; the confirmation TTL and the quote window are the same number, so an approval can never land on a stale price.
 
 Two things this audit surfaced that were not previously tracked:
 
@@ -291,7 +291,7 @@ Verified against `dashboard@develop`: `ProjectTypeQuota` has no storage column; 
 ## Milestone 6 — heli-plugin artifacts
 
 - `.mcp.json`: remote Streamable HTTP entry pointing at the dashboard's MCP endpoint (STDIO scaffold retained for local dev).
-- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — sixteen tools, with the estimate-before-spend split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the dashboard's MCP endpoint (M3) for production.
+- **Done ahead of the milestone**: the legacy article skills are removed and replaced by `skills/compute-embeddings/` and `skills/fine-tune-model/` (DESIGN §8.3), and `mcp/server.py` now implements the §7 tool contract for both — twenty-one tools, matching the hosted `operationId`s, with the request-then-approve split and the rejection of `node_type`/`num_devices`/`device`/`output_dir` asserted by tests. Remaining here: point `.mcp.json` at the dashboard's MCP endpoint (M3) for production.
 - Settle the remaining publication items, all decisions rather than edits: the **privacy policy and terms URLs** (removed rather than guessed at — real paths needed), and whether **`capabilities: ["Read"]`** is accurate for a plugin that starts billable runs. Publisher, support, repository and **licence** metadata are done — the repo ships a proprietary, all-rights-reserved LICENCE. Note it grants an end user no right to run the plugin, which is correct for an internal repo but must gain an end-user grant before public distribution.
 
 ## Milestone 6c — Local execution skill (#1844)

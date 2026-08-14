@@ -62,6 +62,15 @@ NUMBER_WORDS = {
     "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
     "nineteen": 19, "twenty": 20, "thirty": 30,
 }
+# Hyphenated compounds ("twenty-one"), so a count in the twenties is still a claim
+# this test can check rather than prose it silently skips — which is how a stale
+# number would slip through as a vacuous pass.
+NUMBER_WORDS.update({
+    f"{ten}-{unit}": tens + units
+    for ten, tens in (("twenty", 20), ("thirty", 30))
+    for unit, units in (("one", 1), ("two", 2), ("three", 3), ("four", 4), ("five", 5),
+                        ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9))
+})
 
 # DESIGN 2.5 defines the b2c edition as a fixed set of account screens. That
 # count is load-bearing well beyond 2.5 — the porting rules turn on it, the
@@ -149,11 +158,12 @@ def tool_calls(text: str) -> set[str]:
 def tool_like_tokens(text: str) -> set[str]:
     """Tokens shaped like one of our tool names.
 
-    Matches on the verb prefixes the tool surface actually uses, which keeps
-    parameter names (`batch_size`, `model_version`, `s3_key`) out of the result —
-    they would otherwise look like stale tool references.
+    Matches on the verb prefixes the tool surface actually uses, in the
+    lowerCamelCase the hosted `operationId`s use — which keeps snake_case
+    parameter names (`batch_size`, `model_version`, `s3_key`) out of the result,
+    since they would otherwise look like stale tool references.
     """
-    return set(re.findall(r"\b((?:list|get|read|start|estimate)_[a-z0-9_]+)\b", text))
+    return set(re.findall(r"\b((?:list|get|read|start|initiate|complete|abort|register|download|resolve)[A-Z][A-Za-z0-9]*)\b", text))
 
 
 def tool_mentions(text: str) -> set[str]:
@@ -379,6 +389,54 @@ class ToolWiringTests(unittest.TestCase):
             set(),
             "these tools are exposed but no skill tells the agent when to use them",
         )
+
+
+class RetiredNameTests(unittest.TestCase):
+    """Names the surface used to have, which must not reappear.
+
+    `tool_like_tokens` matches lowerCamelCase, so it is structurally blind to the
+    snake_case names this surface was renamed from — a stale `estimate_finetuning_run`
+    in a skill sailed past every other check here. This is the ledger that closes it.
+
+    Deliberately a fixed list rather than a snake_case pattern: `get_embeddings` in
+    run-helical-locally is the open-source package's own Python method, not a tool,
+    and a pattern would flag it.
+    """
+
+    RETIRED = {
+        # renamed to the hosted operationIds
+        "list_models", "list_datasets", "get_dataset", "get_dataset_columns",
+        "get_dataset_obs_values", "start_embedding_run", "start_finetuning_run",
+        "list_runs", "get_run_details", "list_files", "read_file", "list_s3_files",
+        "list_umaps", "get_umap", "get_confirmation_status", "download_result",
+        # removed outright: start* mints the quote and embeds it in the confirmation
+        "estimate_embedding_run", "estimate_finetuning_run", "quote_id",
+    }
+
+    SCANNED = ["README.md", "DESIGN.md", "PLAN.md"]
+
+    def _texts(self):
+        for name in self.SCANNED:
+            yield name, (REPO / name).read_text()
+        for skill in SKILL_DIRS:
+            yield f"{skill.name}/SKILL.md", (skill / "SKILL.md").read_text()
+        yield "mcp/server.py", (PLUGIN / "mcp" / "server.py").read_text()
+
+    def test_no_retired_name_survives(self):
+        for where, text in self._texts():
+            lines = text.split("\n")
+            for name in sorted(self.RETIRED):
+                pattern = re.compile(rf"\b{re.escape(name)}\b")
+                hits = [f"{where}:{i}" for i, line in enumerate(lines, 1) if pattern.search(line)]
+                with self.subTest(file=where, name=name):
+                    # Report locations, never the document — assertNotRegex would dump
+                    # the whole file and bury the one line that matters.
+                    self.assertEqual(hits, [], f"{name} no longer exists but is referenced at {hits}")
+
+    def test_the_ledger_is_not_vacuous(self):
+        """A positive control: the pattern must actually match when the name is present."""
+        self.assertRegex("call estimate_embedding_run first", r"\bestimate_embedding_run\b")
+        self.assertTrue(self.RETIRED)
 
 
 class DocumentationDriftTests(unittest.TestCase):

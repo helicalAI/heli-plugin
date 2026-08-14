@@ -20,8 +20,8 @@ project from the verified subject, which is a pure function of the token, so the
 nothing here for a model to get wrong and nothing for the API to have to distrust.
 
 The cost of that is compatibility with the current `agentcore-mcp` surface, which requires
-`conversationId`/`projectId` in the URL: `list_models`, `start_embedding_run` and
-`start_finetuning_run` will fail against it until the port lands. Everything that scopes
+`conversationId`/`projectId` in the URL: `listModels`, `startEmbeddingRun` and
+`startFinetuningRun` will fail against it until the port lands. Everything that scopes
 from the resource or the caller's memberships — datasets, run details, files, S3, UMAPs —
 works against either. Set `HELICAL_API_ROOT` to choose the route group.
 
@@ -249,17 +249,6 @@ def _enum(arguments: dict[str, Any], field: str, allowed: tuple[str, ...],
     return value
 
 
-def _quote_id(arguments: dict[str, Any]) -> str:
-    """The quote a run is priced against. Required: it is what fixes the price."""
-    value = arguments.get("quote_id")
-    if not isinstance(value, str) or not RUN_ID.fullmatch(value):
-        raise ToolError(
-            "quote_id is required — call the matching estimate_* tool first, show the "
-            "user the cost, and pass the quote it returned."
-        )
-    return value
-
-
 def _project_path(arguments: dict[str, Any]) -> str:
     value = arguments.get("path")
     if not isinstance(value, str) or ".." in value or not PROJECT_PATH.fullmatch(value):
@@ -325,17 +314,8 @@ def _embedding_body(arguments: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
-def _estimate_embedding_run(arguments: dict[str, Any]) -> Any:
-    return _request("POST", "/airflow/estimate/embedding", body=_embedding_body(arguments))
-
-
-def _estimate_finetuning_run(arguments: dict[str, Any]) -> Any:
-    return _request("POST", "/airflow/estimate/finetuning", body=_finetuning_body(arguments))
-
-
 def _start_embedding_run(arguments: dict[str, Any]) -> Any:
     body = _embedding_body(arguments)
-    body["quote_id"] = _quote_id(arguments)
     return _request("POST", "/airflow/trigger/embedding", body=body)
 
 
@@ -376,7 +356,6 @@ def _finetuning_body(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _start_finetuning_run(arguments: dict[str, Any]) -> Any:
     body = _finetuning_body(arguments)
-    body["quote_id"] = _quote_id(arguments)
     return _request("POST", "/airflow/trigger/finetuning", body=body)
 
 
@@ -443,10 +422,16 @@ READ_ONLY = {
     "idempotentHint": True,
     "openWorldHint": True,
 }
+WRITES = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,  # stages or records something; consumes no compute
+    "openWorldHint": True,
+}
 LAUNCH = {
     "readOnlyHint": False,
     "destructiveHint": False,
-    "idempotentHint": False,  # each call starts a run and consumes compute
+    "idempotentHint": False,  # spends the quoted credit and starts a run
     "openWorldHint": True,
 }
 
@@ -469,7 +454,7 @@ def _tool(name: str, description: str, properties: dict[str, Any],
 
 TOOLS = [
     _tool(
-        "list_models",
+        "listModels",
         "List models available in the caller's project. Promoted models by default; pass "
         "status='all' to include unpromoted candidates. Returns model_id, name, version, "
         "base_model and is_promoted — pass `name` as the `model` for a run.",
@@ -482,7 +467,7 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "list_datasets",
+        "listDatasets",
         "Search the single-cell catalogue. name/author match as case-insensitive "
         "substrings; organism/tissue/disease match an exact array element. Returns rows "
         "with id, cellCount and geneCount, plus the total across all pages.",
@@ -498,7 +483,7 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "get_dataset",
+        "getDataset",
         "Full metadata for one dataset, including cellCount, geneCount and the label "
         "columns already identified (celltypeColumn, diseaseColumn, donorColumn).",
         {"id": _UUID_FIELD},
@@ -506,7 +491,7 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "get_dataset_columns",
+        "getDatasetColumns",
         "List the dataset's .obs column names. Use this to choose the label column for "
         "fine-tuning rather than guessing at a plausible name.",
         {"id": _UUID_FIELD},
@@ -514,7 +499,7 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "get_dataset_obs_values",
+        "getDatasetObsValues",
         "The distinct values of the dataset's categorical .obs columns, or of one column "
         "if `column` is given. Use it to confirm a label column has the classes expected.",
         {"id": _UUID_FIELD, "column": {"type": "string", "maxLength": 200}},
@@ -522,67 +507,10 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "estimate_embedding_run",
-        "Price an embedding run before starting it. Free, starts nothing, and safe to "
-        "call as often as you like. Takes the same arguments as start_embedding_run and "
-        "returns the token count, the price, the assumptions behind it, and a `quote_id` "
-        "valid for a limited window. SHOW THE USER the tokens and price and get their "
-        "explicit approval, then pass the quote_id to start_embedding_run — the quote is "
-        "what fixes the price. Changing any argument invalidates it; estimate again.",
-        {
-            "datasetId": _UUID_FIELD,
-            "model": {"type": "string", "minLength": 1, "maxLength": 200},
-            "batch_size": {"type": "integer", "minimum": 1, "maximum": 4096},
-            "model_version": {"type": "integer", "minimum": 1, "maximum": 10000},
-            "modalities": {"type": "array", "items": {"type": "string", "enum": list(MODALITIES)},
-                           "minItems": 1, "maxItems": 3},
-            "pretrained_embedding_species": {"type": "array", "items": {"type": "string"}},
-            "device": {"type": "string", "enum": ["cuda", "cpu"], "default": "cuda"},
-        },
-        ["datasetId", "model", "batch_size"],
-        READ_ONLY,
-    ),
-    _tool(
-        "estimate_finetuning_run",
-        "Price a fine-tuning run before starting it. Free and starts nothing. Training "
-        "tokens scale with `epochs`, so this is usually far larger than an embedding "
-        "quote on the same dataset — quote the epoch count you intend to run, and "
-        "re-estimate if it changes. Returns a `quote_id` for start_finetuning_run.",
-        {
-            "datasetId": _UUID_FIELD,
-            "model": {"type": "string", "minLength": 1, "maxLength": 200},
-            "labels": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10},
-            "task_type": {"type": "array", "minItems": 1, "maxItems": 10,
-                          "items": {"type": "string", "enum": ["prediction", "contrastive"]}},
-            "model_type": {"type": "array", "minItems": 1, "maxItems": 10,
-                           "items": {"type": "string", "enum": ["classification", "regression"]}},
-            "learning_rate": {"type": "number", "exclusiveMinimum": 0},
-            "batch_size": {"type": "integer", "minimum": 1, "maximum": 4096},
-            "epochs": {"type": "integer", "minimum": 1, "maximum": 1000},
-            "logging_steps": {"type": "integer", "minimum": 1},
-            "lr_scheduler": {"type": "string", "enum": list(LR_SCHEDULERS)},
-            "min_lr": {"type": "number", "exclusiveMinimum": 0},
-            "val_steps": {"type": "integer", "minimum": 1},
-            "seed": {"type": "integer", "minimum": 1},
-            "num_trainable_layers": {"type": "integer", "minimum": 1, "maximum": 1000},
-            "registered_model_name": {"type": "string", "minLength": 1, "maxLength": 200},
-            "model_version": {"type": "integer", "minimum": 1, "maximum": 10000},
-            "valDatasetId": _UUID_FIELD,
-            "val_split": {"type": "number", "minimum": 0.01, "maximum": 0.5},
-            "weight_decay": {"type": "number", "minimum": 0},
-            "early_stopping_patience": {"type": "integer", "minimum": 1},
-            "device": {"type": "string", "enum": ["cuda", "cpu"], "default": "cuda"},
-        },
-        [
-            "datasetId", "model", "labels", "task_type", "model_type", "learning_rate",
-            "batch_size", "epochs", "logging_steps", "lr_scheduler", "min_lr",
-            "val_steps", "seed", "num_trainable_layers", "registered_model_name",
-        ],
-        READ_ONLY,
-    ),
-    _tool(
-        "start_embedding_run",
-        "Start an embedding run. Requires the `quote_id` from estimate_embedding_run, "
+        "startEmbeddingRun",
+        "Request an embedding run. Does NOT start it: prices the request and returns a pending "
+        "confirmation carrying the quote and the resolved parameters. Show the user the "
+        "tokens and the price, then resolveConfirmation to launch. "
         "which fixes the price. Present the quoted cost and get the user's explicit "
         "approval BEFORE calling this — nothing else will ask them. "
         "`batch_size` is required by the API. `modalities` must include 'sc' for "
@@ -596,16 +524,15 @@ TOOLS = [
                            "minItems": 1, "maxItems": 3},
             "pretrained_embedding_species": {"type": "array", "items": {"type": "string"}},
             "device": {"type": "string", "enum": ["cuda", "cpu"], "default": "cuda"},
-            "quote_id": {"type": "string", "minLength": 1, "maxLength": 200},
         },
-        ["datasetId", "model", "batch_size", "quote_id"],
-        LAUNCH,
+        ["datasetId", "model", "batch_size"],
+        WRITES,
     ),
     _tool(
-        "start_finetuning_run",
-        "Start a fine-tuning run — the most expensive operation here. Requires the "
-        "`quote_id` from estimate_finetuning_run. Present the quoted cost and get the "
-        "user's explicit approval BEFORE calling this. `labels`, "
+        "startFinetuningRun",
+        "Request a fine-tuning run — the most expensive operation here. Does NOT start "
+        "it: prices it and returns a pending confirmation. Present the quoted cost, get "
+        "the user's explicit approval, then resolveConfirmation to launch. `labels`, "
         "`task_type` and `model_type` are parallel arrays with one entry per task. The "
         "API requires every field listed as required here; it has no defaults for them.",
         {
@@ -632,18 +559,17 @@ TOOLS = [
             "weight_decay": {"type": "number", "minimum": 0},
             "early_stopping_patience": {"type": "integer", "minimum": 1},
             "device": {"type": "string", "enum": ["cuda", "cpu"], "default": "cuda"},
-            "quote_id": {"type": "string", "minLength": 1, "maxLength": 200},
         },
         [
             "datasetId", "model", "labels", "task_type", "model_type",
             "learning_rate", "batch_size", "epochs", "logging_steps", "lr_scheduler",
             "min_lr", "val_steps", "seed", "num_trainable_layers",
-            "registered_model_name", "quote_id",
+            "registered_model_name",
         ],
-        LAUNCH,
+        WRITES,
     ),
     _tool(
-        "list_runs",
+        "listDagRuns",
         "List runs in a project, newest first, with their state and any child runs. "
         "`state` and `dagIds` accept several values.",
         {
@@ -656,17 +582,17 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "get_run_details",
+        "getRunDetails",
         "One run's state plus the dataset it used and the artifacts it produced. The "
-        "artifacts carry s3_key values to read with list_files / read_file.",
+        "artifacts carry s3_key values to read with listFiles / readFile.",
         {"runId": {"type": "string", "minLength": 1, "maxLength": 200}},
         ["runId"],
         READ_ONLY,
     ),
     _tool(
-        "list_files",
+        "listFiles",
         "List a directory under /projects/<project>/data — typically a run's output "
-        "directory taken from get_run_details.",
+        "directory taken from getRunDetails.",
         {
             "path": {"type": "string", "minLength": 1, "maxLength": 500},
             "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
@@ -675,7 +601,7 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "read_file",
+        "readFile",
         "Read a UTF-8 text file under /projects/<project>/data, up to 1 MiB. Binary "
         "outputs such as .npy embedding matrices cannot be read through this tool; "
         "report their path to the user instead.",
@@ -687,14 +613,14 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "list_s3_files",
+        "listS3Files",
         "List an object-storage prefix for the caller's projects, non-recursively.",
         {"path": {"type": "string", "maxLength": 500}},
         [],
         READ_ONLY,
     ),
     _tool(
-        "list_umaps",
+        "listUmaps",
         "List UMAP artifacts, optionally for one dataset. Each row carries the dagRunId "
         "that produced it.",
         {
@@ -705,44 +631,233 @@ TOOLS = [
         READ_ONLY,
     ),
     _tool(
-        "get_umap",
+        "getUmap",
         "Fetch the parsed UMAP coordinates and labels for a run. The payload can be "
         "large; prefer summarising it over echoing it.",
         {"runId": {"type": "string", "minLength": 1, "maxLength": 200}},
         ["runId"],
         READ_ONLY,
     ),
+    _tool(
+        "initiateDatasetUpload",
+        "Open a multipart upload for a .h5ad dataset and get presigned S3 part URLs. Returns "
+        "uploadId, s3Key, partSizeBytes and a parts[] of {partNumber, url}. PUT each part's "
+        "bytes to its own url, keep the returned ETags, then call completeDatasetUpload.",
+        {
+            "fileName": {"type": "string", "minLength": 1, "maxLength": 400},
+            "sizeBytes": {"type": "integer", "minimum": 1},
+        },
+        ["fileName", "sizeBytes"],
+        WRITES,
+    ),
+    _tool(
+        "completeDatasetUpload",
+        "Assemble an uploaded dataset's parts into a single object. Returns the assembled "
+        "s3Key, sizeBytes and partCount. Pass the s3Key to registerDataset — the file is not "
+        "a dataset until it is registered.",
+        {
+            "uploadId": {"type": "string", "minLength": 1},
+            "s3Key": {"type": "string", "minLength": 1},
+            "parts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "partNumber": {"type": "integer", "minimum": 1},
+                        "eTag": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["partNumber", "eTag"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        ["uploadId", "s3Key", "parts"],
+        WRITES,
+    ),
+    _tool(
+        "abortDatasetUpload",
+        "Discard an unfinished dataset upload and its parts. Call this if the upload is "
+        "abandoned, otherwise the staged parts linger.",
+        {
+            "uploadId": {"type": "string", "minLength": 1},
+            "s3Key": {"type": "string", "minLength": 1},
+        },
+        ["uploadId", "s3Key"],
+        WRITES,
+    ),
+    _tool(
+        "registerDataset",
+        "Register an uploaded .h5ad file as a dataset. Takes the s3Key from "
+        "completeDatasetUpload plus the catalogue metadata, runs the import/QC path and "
+        "returns the dataset record with cellCount and geneCount.",
+        {
+            "s3Key": {"type": "string", "minLength": 1},
+            "fileName": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1},
+            "author": {"type": "string", "minLength": 1},
+            "year": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "minLength": 1},
+            "organism": {"type": "array", "items": {"type": "string"}},
+            "tissue": {"type": "array", "items": {"type": "string"}},
+            "disease": {"type": "array", "items": {"type": "string"}},
+            "assay": {"type": "array", "items": {"type": "string"}},
+            "sex": {"type": "array", "items": {"type": "string"}},
+            "cellType": {"type": "array", "items": {"type": "string"}},
+            "cellCount": {"type": "integer", "minimum": 0},
+            "externalId": {"type": "string", "minLength": 1},
+        },
+        ["s3Key", "fileName", "name", "externalId"],
+        WRITES,
+    ),
+    _tool(
+        "downloadArtifact",
+        "Presigned GET URL for ONE artifact produced by one of your runs, addressed by "
+        "artifact id from getRunDetails — never by path. Fetch with `curl -o '<fileName>' "
+        "'<url>'`; no auth header, expires within the hour, serves raw bytes of any size. "
+        "Run outputs only: uploaded inputs have no artifact row and are not downloadable, "
+        "and fine-tuned weights are withheld.",
+        {
+            "artifactId": _UUID_FIELD,
+            "expiresInSeconds": {"type": "integer", "minimum": 60, "maximum": 3600},
+        },
+        ["artifactId"],
+        READ_ONLY,
+    ),
+    _tool(
+        "getConfirmationStatus",
+        "Poll a confirmation returned by a start* tool: pending, executed, rejected, expired "
+        "or failed. Use it when the response to resolveConfirmation was lost — never resolve "
+        "twice to find out whether the run started.",
+        {"id": _UUID_FIELD},
+        ["id"],
+        READ_ONLY,
+    ),
+    _tool(
+        "resolveConfirmation",
+        "Approve or reject a queued run after the user has decided. 'approve' debits the "
+        "quoted price and launches, returning the run id; 'reject' discards it and charges "
+        "nothing. Neither can be undone, and this is the only billable call — ask the user "
+        "first, every time.",
+        {
+            "id": _UUID_FIELD,
+            "decision": {"type": "string", "enum": ["approve", "reject"]},
+        },
+        ["id", "decision"],
+        WRITES,
+    ),
 ]
 
+
+def _initiate_dataset_upload(arguments: dict[str, Any]) -> Any:
+    body = {
+        "fileName": _string(arguments, "fileName", maximum=400),
+        "sizeBytes": _int(arguments, "sizeBytes", minimum=1, maximum=1 << 42),
+    }
+    return _request("POST", "/data/upload/initiate", None, body)
+
+
+def _complete_dataset_upload(arguments: dict[str, Any]) -> Any:
+    parts = arguments.get("parts")
+    if not isinstance(parts, list) or not parts:
+        raise ToolError("parts must be a non-empty array of {partNumber, eTag}.")
+    cleaned = []
+    for part in parts:
+        if not isinstance(part, dict):
+            raise ToolError("Each part must be an object with partNumber and eTag.")
+        cleaned.append({
+            "partNumber": _int(part, "partNumber", minimum=1, maximum=10000),
+            "eTag": _string(part, "eTag", maximum=200),
+        })
+    body = {
+        "uploadId": _string(arguments, "uploadId", maximum=400),
+        "s3Key": _string(arguments, "s3Key", maximum=1024),
+        "parts": cleaned,
+    }
+    return _request("POST", "/data/upload/complete", None, body)
+
+
+def _abort_dataset_upload(arguments: dict[str, Any]) -> Any:
+    body = {
+        "uploadId": _string(arguments, "uploadId", maximum=400),
+        "s3Key": _string(arguments, "s3Key", maximum=1024),
+    }
+    return _request("POST", "/data/upload/abort", None, body)
+
+
+def _register_dataset(arguments: dict[str, Any]) -> Any:
+    body: dict[str, Any] = {
+        "s3Key": _string(arguments, "s3Key", maximum=1024),
+        "fileName": _string(arguments, "fileName", maximum=400),
+        "name": _string(arguments, "name", maximum=200),
+        "externalId": _string(arguments, "externalId", maximum=200),
+    }
+    for key in ("author", "year", "source"):
+        _put(body, key, _string(arguments, key, maximum=200, required=False))
+    for key in ("organism", "tissue", "disease", "assay", "sex", "cellType"):
+        _put(body, key, _string_list(arguments, key, maximum_items=50, required=False))
+    _put(body, "cellCount", _int(arguments, "cellCount", minimum=0, maximum=1 << 31, required=False))
+    return _request("POST", "/data/register", None, body)
+
+
+def _download_artifact(arguments: dict[str, Any]) -> Any:
+    artifact_id = _uuid(arguments, "artifactId")
+    query: dict[str, str] = {}
+    expires = _int(arguments, "expiresInSeconds", minimum=60, maximum=3600, required=False)
+    if expires is not None:
+        query["expiresInSeconds"] = str(expires)
+    return _request("GET", f"/artifacts/{artifact_id}/download", query)
+
+
+def _get_confirmation_status(arguments: dict[str, Any]) -> Any:
+    return _request("GET", f"/confirmations/{_uuid(arguments, 'id')}")
+
+
+def _resolve_confirmation(arguments: dict[str, Any]) -> Any:
+    decision = _enum(arguments, "decision", ("approve", "reject"))
+    return _request("POST", f"/confirmations/{_uuid(arguments, 'id')}/resolve", None,
+                    {"decision": decision})
+
+
 HANDLERS = {
-    "list_models": _list_models,
-    "estimate_embedding_run": _estimate_embedding_run,
-    "estimate_finetuning_run": _estimate_finetuning_run,
-    "list_datasets": _list_datasets,
-    "get_dataset": _get_dataset,
-    "get_dataset_columns": _get_dataset_columns,
-    "get_dataset_obs_values": _get_dataset_obs_values,
-    "start_embedding_run": _start_embedding_run,
-    "start_finetuning_run": _start_finetuning_run,
-    "list_runs": _list_runs,
-    "get_run_details": _get_run_details,
-    "list_files": _list_files,
-    "read_file": _read_file,
-    "list_s3_files": _list_s3_files,
-    "list_umaps": _list_umaps,
-    "get_umap": _get_umap,
+    "listModels": _list_models,
+    "listDatasets": _list_datasets,
+    "getDataset": _get_dataset,
+    "getDatasetColumns": _get_dataset_columns,
+    "getDatasetObsValues": _get_dataset_obs_values,
+    "startEmbeddingRun": _start_embedding_run,
+    "startFinetuningRun": _start_finetuning_run,
+    "listDagRuns": _list_runs,
+    "getRunDetails": _get_run_details,
+    "listFiles": _list_files,
+    "readFile": _read_file,
+    "listS3Files": _list_s3_files,
+    "listUmaps": _list_umaps,
+    "getUmap": _get_umap,
+    "initiateDatasetUpload": _initiate_dataset_upload,
+    "completeDatasetUpload": _complete_dataset_upload,
+    "abortDatasetUpload": _abort_dataset_upload,
+    "registerDataset": _register_dataset,
+    "downloadArtifact": _download_artifact,
+    "getConfirmationStatus": _get_confirmation_status,
+    "resolveConfirmation": _resolve_confirmation,
 }
 
 INSTRUCTIONS = (
     "Tools over the Helical platform for embedding datasets with foundation models and "
     "fine-tuning them.\n\n"
-    "Work is billed per token at a price that varies by model. Before every run: call the "
-    "matching estimate_* tool (free, starts nothing), show the user the token count and "
-    "the price, get an explicit yes, and pass the returned quote_id to the start_* tool. "
-    "Nothing downstream will ask them to confirm — you are the only checkpoint. Credit is "
-    "debited when the run starts. Then follow it with list_runs and get_run_details.\n\n"
-    "You cannot choose a project — scope comes from the authenticated user. Pass dataset "
-    "and model identifiers, never filesystem paths. Read outputs only under "
+    "Work is billed per token at a price that varies by model, and runs are approved before "
+    "they start. A start* tool does NOT launch anything: it prices the request and returns a "
+    "pending confirmation carrying the quote and the resolved parameters. Show the user the "
+    "token count and the price, get an explicit yes, then call resolveConfirmation with "
+    "decision='approve' to launch — that call is the only billable one, and it returns the "
+    "run id. decision='reject' costs nothing. Nothing downstream will ask them to confirm; "
+    "you are the only checkpoint. Then follow the run with listDagRuns and getRunDetails.\n\n"
+    "To bring in a new dataset: initiateDatasetUpload, PUT each part to its own presigned "
+    "url, completeDatasetUpload, then registerDataset. Results come back through "
+    "downloadArtifact, by artifact id from getRunDetails — run outputs only; the file you "
+    "uploaded is not downloadable, and neither are fine-tuned weights.\n\n"
+    "You cannot choose a project — scope comes from the authenticated user. Pass dataset, "
+    "model and artifact identifiers, never filesystem paths. Read outputs only under "
     "/projects/<project>/data. Never print credentials or raw upstream errors."
 )
 

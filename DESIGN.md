@@ -320,7 +320,7 @@ One shared estimator would be the wrong shape. The token count is a different fu
 Common to all of them:
 
 - Input: the same parameters as the run it prices, so the quote is tied to what will actually execute — `dataset_id` and `model` everywhere, plus `labels` and `epochs` for fine-tuning. Changing any of them invalidates the quote and needs a fresh one; a quote is not a general price list.
-- Output: `estimated_tokens`, `price_per_million_tokens`, `estimated_price`, `assumptions` (rows/genes counted, subsampling, tokenizer version), and a `quote_id` with a validity window.
+- Output: `estimated_tokens`, `price_per_million_tokens`, `estimated_price`, `assumptions` (rows/genes counted, subsampling, tokenizer version), and an expiry — carried in the confirmation `start*` returns, not handed to the caller.
 - Estimates derive from dataset metadata the platform already has (row count, gene count, obs columns) plus the model's tokenizer parameters — no billable compute.
 - Because the token count is deterministic, **the quote is the invoice**: the tokens and price shown are what gets debited, and the quoted price-per-token is honored for any run started inside the quote window, so a price-table change never silently reprices a run the user already approved. A user is never shown "we estimate $80" and then billed $160.
 - This deliberately replaces cost estimation built on the existing runtime estimator (`airflow/utils/time-estimation.ts`), which predicts seconds from a hard-coded per-model seconds-per-row table. That table is coupled to the current package set — switching Geneformer to flash-attention 2 invalidated it — so it is unfit as a billing basis, and keeping it accurate would be a permanent tax. The runtime estimator stays useful for telling a user how long to expect to wait; it simply no longer determines what they pay.
@@ -646,7 +646,7 @@ This is also where the reference prompts that §12.2 dismissed become directly a
 
 The installed artifact is currently an **internal pro forma preview**. The checked-in
 `.mcp.json` starts the dependency-free STDIO server in preview mode by default. MCP
-initialization, ping and tool discovery expose the planned contract of sixteen tools; every
+initialization, ping and tool discovery expose the planned contract of twenty-one tools; every
 declared tool call returns `Not implemented yet` before configuration, credentials, or
 networking. All packaged skills stop at a preview gate and disable implicit invocation.
 This is enough to evaluate installation, discovery, routing metadata, starter prompts and

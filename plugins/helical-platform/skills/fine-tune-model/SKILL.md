@@ -19,20 +19,20 @@ remaining sections document intended future behavior only.
 Trains a foundation model on a labelled dataset and registers the result so it can be used
 for embeddings.
 
-`start_finetuning_run` starts real compute immediately, and it is the most expensive thing
+`startFinetuningRun` starts real compute immediately, and it is the most expensive thing
 on this surface. Nothing downstream will ask the user to confirm, so **you are the
 confirmation step** — and the preparation below matters more than it does for embeddings,
 because a misconfigured fine-tuning run wastes far more.
 
 ## 1. Select the dataset and confirm the label column
 
-`list_datasets(...)` → `get_dataset({ id })`. The record already names likely label
+`listDatasets(...)` → `getDataset({ id })`. The record already names likely label
 columns: `celltypeColumn`, `celltypeColumnLv2`, `diseaseColumn`, `donorColumn`.
 
 Then verify rather than assume:
 
-- `get_dataset_columns({ id })` → the actual `.obs` column names.
-- `get_dataset_obs_values({ id, column })` → that column's distinct values.
+- `getDatasetColumns({ id })` → the actual `.obs` column names.
+- `getDatasetObsValues({ id, column })` → that column's distinct values.
 
 **Confirm the intended column with the user before starting.** Training on a plausible-
 looking but wrong column wastes the whole run, and nothing downstream will catch it. Check
@@ -41,7 +41,7 @@ singletons will not train usefully.
 
 ## 2. Choose a base model
 
-`list_models({ modelType?, status? })`. Fine-tune from a base model, or
+`listModels({ modelType?, status? })`. Fine-tune from a base model, or
 from an already fine-tuned one to train further.
 
 Before committing: if the user's goal is representations rather than a classifier, a
@@ -54,7 +54,7 @@ The API has **no defaults** for most training parameters — every one of these 
 and a missing one is a 400:
 
 ```
-start_finetuning_run({
+startFinetuningRun({
   datasetId, model,
   labels:      ["cell_type"],      # parallel arrays: one entry each per task
   task_type:   ["prediction"],     # "prediction" | "contrastive"
@@ -81,32 +81,33 @@ that the configuration was wrong.
 `registered_model_name` must not be only a model prefix (`scGPT_` alone is rejected). Give
 it a name that says what makes this model different.
 
-Price it first with `estimate_finetuning_run`, passing exactly the arguments you intend to
-run. It is free and starts nothing, and it returns a `quote_id` that `start_finetuning_run`
-requires. **Because epochs multiply the token count, a fine-tuning quote is usually many
-times an embedding quote on the same dataset** — show the user the number and the epoch
-count it assumes.
+Call `startFinetuningRun` with exactly the arguments you intend to run. **It starts
+nothing and costs nothing** — it prices the request and returns a pending confirmation
+carrying the quote. **Because epochs multiply the token count, a fine-tuning quote is
+usually many times an embedding quote on the same dataset** — show the user the number and
+the epoch count it assumes.
 
-**Get their explicit yes before the call**, restating the dataset, the label column, the
-base model, the epoch count, and the price. This is the expensive one; an approval for an
-embedding run is not an approval for this. Change the epochs and the quote is void —
-estimate again.
+**Get their explicit yes, then `resolveConfirmation({ id, decision: "approve" })`**,
+restating the dataset, the label column, the base model, the epoch count, and the price
+before you do. That approval is the billable call. This is the expensive operation; an
+approval for an embedding run is not an approval for this. Change the epochs and you need
+a new request — the confirmation prices the arguments it was created with.
 
 ## 4. Follow it through
 
-`list_runs({ dagIds: ["finetuning"] })` then `get_run_details({ runId })` until terminal.
+`listDagRuns({ dagIds: ["finetuning"] })` then `getRunDetails({ runId })` until terminal.
 Fine-tuning runs are long; poll at a sensible interval and keep the user informed.
 
 ## 5. Use the result
 
-On success the model is registered and appears in `list_models` — with
+On success the model is registered and appears in `listModels` — with
 `status: "unpromoted"` until someone promotes it. Its `name` is what you pass as `model`
 to `compute-embeddings`.
 
 ## Judging whether it worked
 
 Be honest about the limit: these tools report run state and artifacts, not a training
-curve or a metric. `get_run_details` gives artifacts, and `read_file` can read a text
+curve or a metric. `getRunDetails` gives artifacts, and `readFile` can read a text
 metrics file if the run wrote one — but binary checkpoints cannot be inspected here.
 
 The practical comparison available on this surface is an embedding from the base model
