@@ -25,11 +25,13 @@ PLUGIN = Path(__file__).parents[1]
 REPO = PLUGIN.parents[1]
 MANIFEST_PATH = PLUGIN / ".codex-plugin" / "plugin.json"
 MCP_JSON_PATH = PLUGIN / ".mcp.json"
+MARKETPLACE_PATH = REPO / ".agents" / "plugins" / "marketplace.json"
 SKILLS_DIR = PLUGIN / "skills"
 
 MANIFEST_TEXT = MANIFEST_PATH.read_text()
 MANIFEST = json.loads(MANIFEST_TEXT)
 MCP_JSON = json.loads(MCP_JSON_PATH.read_text())
+MARKETPLACE = json.loads(MARKETPLACE_PATH.read_text())
 SKILL_DIRS = sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir())
 
 # The skills that drive the hosted API, and the one that must not.
@@ -226,6 +228,63 @@ class ManifestMetadataTests(unittest.TestCase):
             len(SKILL_DIRS),
             "fewer defaultPrompt entries than skills — at least one is undiscoverable",
         )
+
+
+class PreviewPackagingTests(unittest.TestCase):
+    def test_manifest_is_explicitly_a_nonfunctional_preview(self):
+        interface = MANIFEST["interface"]
+        visible_copy = " ".join([
+            MANIFEST["description"],
+            interface["displayName"],
+            interface["shortDescription"],
+            interface["longDescription"],
+            *interface["defaultPrompt"],
+        ]).lower()
+        self.assertIn("preview", visible_copy)
+        self.assertIn("not implemented yet", visible_copy)
+        self.assertEqual(MANIFEST["version"], "0.1.1-preview.1")
+        self.assertEqual(interface["capabilities"], [])
+
+    def test_mcp_launcher_forces_pro_forma_mode_without_credentials(self):
+        config = MCP_JSON["mcpServers"]["helical"]
+        self.assertEqual(config["command"], "uv")
+        self.assertEqual(
+            config["args"],
+            [
+                "run", "--no-project", "--offline", "--no-python-downloads",
+                "--no-managed-python", "python", "./mcp/server.py",
+            ],
+        )
+        self.assertNotIn("env_vars", config)
+        self.assertNotIn("env", config)
+        self.assertNotIn("--reference-adapter", config["args"])
+
+    def test_repo_marketplace_points_at_this_plugin(self):
+        self.assertEqual(MARKETPLACE["name"], "helical-internal")
+        self.assertEqual(MARKETPLACE["interface"]["displayName"], "Helical Internal")
+        self.assertEqual(len(MARKETPLACE["plugins"]), 1)
+        entry = MARKETPLACE["plugins"][0]
+        self.assertEqual(entry["name"], MANIFEST["name"])
+        self.assertEqual(entry["source"]["source"], "local")
+        self.assertEqual((REPO / entry["source"]["path"]).resolve(), PLUGIN.resolve())
+        self.assertEqual(entry["policy"], {
+            "installation": "AVAILABLE",
+            "authentication": "ON_INSTALL",
+        })
+        self.assertEqual(entry["category"], "Productivity")
+
+    def test_every_packaged_skill_stops_at_the_preview_gate(self):
+        for skill_dir in SKILL_DIRS:
+            with self.subTest(skill=skill_dir.name):
+                instructions = (skill_dir / "SKILL.md").read_text()
+                self.assertIn("## Pro forma preview gate", instructions[:1_200])
+                self.assertIn("Stop here", instructions[:1_200])
+                config = agent_config(skill_dir).lower()
+                self.assertIn("preview", config)
+                self.assertIn("allow_implicit_invocation: false", config)
+
+    def test_mcp_and_manifest_versions_match(self):
+        self.assertEqual(server.SERVER_VERSION, MANIFEST["version"])
 
 
 class SkillStructureTests(unittest.TestCase):

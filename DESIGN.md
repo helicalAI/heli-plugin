@@ -1,8 +1,8 @@
 # Helical Platform Plugin — Design Blueprint
 
-Status: production design target with a minimal local reference scaffold
+Status: production design target with an internal pro forma preview
 Plugin: `helical-platform`
-Version: `0.1.0`
+Version: `0.1.1-preview.1`
 Last reviewed: 2026-07-30 (amended to resolve design-review comments)
 Repository: [helicalAI/heli-plugin](https://github.com/helicalAI/heli-plugin)
 Tracking: GitHub epic [helicalAI/dashboard#1756](https://github.com/helicalAI/dashboard/issues/1756) · plan in [`PLAN.md`](PLAN.md)
@@ -644,21 +644,36 @@ This is also where the reference prompts that §12.2 dismissed become directly a
 
 ### 8.2 Scaffold status
 
-The checked-in `mcp/server.py` is a dependency-free STDIO adapter over **the dashboard's existing `agentcore-mcp` API** — sixteen tools, each mapping 1:1 onto a route under `/api/agentcore-mcp/*`, with paths, parameter names, and response shapes taken from those routes rather than invented. Auth is a Cognito access token as `Authorization: Bearer`. It is the local-development scaffold and the specification of the transport-safety controls any adapter must preserve: HTTPS-only upstream, redirects disabled so a redirect cannot forward the bearer token, bounded arguments with unknown ones rejected, a 64 KB request cap and 2 MB response cap, a 30-second timeout, and upstream errors surfaced as their short `error` string with the `detail` field — which can carry Zod issues or exception text — dropped.
+The installed artifact is currently an **internal pro forma preview**. The checked-in
+`.mcp.json` starts the dependency-free STDIO server in preview mode by default. MCP
+initialization, ping and tool discovery expose the planned contract of sixteen tools; every
+declared tool call returns `Not implemented yet` before configuration, credentials, or
+networking. All packaged skills stop at a preview gate and disable implicit invocation.
+This is enough to evaluate installation, discovery, routing metadata, starter prompts and
+error presentation without implying that a functional platform surface exists.
 
-**The scaffold therefore reflects today's API, not the target design, and the gap is the point.** Against `agentcore-mcp` as it stands:
+The same `mcp/server.py` retains an unfinished API adapter behind the explicit
+development-only `--reference-adapter` flag. That adapter maps the sixteen tool contracts
+onto planned `/api/platform-mcp/*` routes, with shapes derived from the dashboard's existing
+`agentcore-mcp` routes rather than invented. Auth is a Cognito access token as
+`Authorization: Bearer`. It specifies the transport-safety controls any future adapter must
+preserve: HTTPS-only upstream, redirects disabled so a redirect cannot forward the bearer
+token, bounded arguments with unknown ones rejected, a 64 KB request cap and 2 MB response
+cap, a 30-second timeout, and safe upstream-error mapping.
+
+**The reference adapter reflects the intended port, not a deployed API, and the gap is the point.** Against `agentcore-mcp` as it stands:
 
 - there is **no cost estimate, balance, or billing route of any kind**, so the estimate-then-approve flow in §5.2 and §6.1 cannot be exercised yet;
 - there is **no dataset upload, registration, or presigned URL**, so a user cannot bring their own `.h5ad` through the tool surface;
 - there is **no artifact download**; outputs are reachable only as text under `/projects/<project>/data` via `readDatasetFile`, capped at 1 MiB, which cannot return a binary `.npy` embedding matrix;
-- **triggers do not launch.** Every `trigger*` route enqueues through the approval queue and returns `{status: "pending_approval", confirmation_id}`. `triggerValidated` — the direct-launch helper §2.3 relies on — exists in `_helpers.ts` with zero route callsites;
+- **triggers do not launch.** Every `trigger*` route enqueues through the approval queue and returns `{status: "pending_approval", confirmation_id}` — which is the behaviour §6.1 now keeps rather than replaces. `triggerValidated` exists in `_helpers.ts` with zero route callsites and gains its caller inside `executeConfirmation`;
 - **`conversationId` is required** by `listModels`, both triggers, and `getConfirmationStatus`, and `listDagRuns` requires a caller-supplied `projectId`. Both are exactly the scoping the port replaces with subject-derived resolution.
 
-Those five gaps are the concrete content of the `platform-mcp` port (§2.3, §7.1) and of the billing work in §5. Until it lands, the scaffold is honest about what can actually be done: select a catalogue dataset, choose a model, queue a run for human approval, poll it, and read text outputs.
+Those five gaps are the concrete content of the `platform-mcp` port (§2.3, §7.1) and of the billing work in §5. Until it lands, the installed preview performs none of these operations; the reference adapter exists only to preserve and test the future client contract.
 
-Its environment variables are `HELICAL_API_BASE_URL` (the dashboard origin), `HELICAL_API_TOKEN`, and `HELICAL_API_ROOT` — the route group, defaulting to `/api/agentcore-mcp`. Values never live in the repo. The client sends `conversationId`/`projectId` only when supplied, so pointing it at the port is a configuration change rather than a rewrite; a test asserts both path shapes.
+The reference adapter's environment variables are `HELICAL_API_BASE_URL` (the dashboard origin), `HELICAL_API_TOKEN`, and `HELICAL_API_ROOT` (default `/api/platform-mcp`). Values never live in the repo. Project scope is never transmitted on this target surface; tests assert that no schema or request exposes it.
 
-Publisher, support and repository metadata in `plugin.json` are set, and the repository ships a **proprietary, all-rights-reserved LICENCE** declared as `license: "Proprietary"`. Two items remain open before distribution, each a decision rather than an edit: the **privacy policy and terms URLs** (absent rather than guessed at), and whether **`capabilities: ["Read"]`** is honest for a plugin that starts billable runs.
+Publisher, support and repository metadata in `plugin.json` are set, and the repository ships a **proprietary, all-rights-reserved LICENCE** declared as `license: "Proprietary"`. The preview declares an empty capability list. Before functional distribution, the **privacy policy and terms URLs** and the correct read/write capability labels remain explicit decisions rather than guessed metadata.
 
 The licence reserves all rights and therefore grants an end user no right to run the plugin — correct while the repository is internal, but **distributing the plugin publicly requires adding an end-user grant** covering at least installation and use as supplied. That is a decision for counsel, not an edit.
 

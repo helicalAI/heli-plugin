@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Dependency-free MCP adapter over the Helical dashboard's B2C API.
 
+The server starts in pro forma mode: discovery remains functional, but every declared
+tool call returns a stable ``Not implemented yet`` tool error before tool-schema or
+business validation,
+configuration, or network access. The unfinished reference adapter is available only
+with the explicit development flag ``--reference-adapter``.
+
 Tool shapes follow the dashboard's `agentcore-mcp` routes — paths, parameter names, and
 response fields are taken from them, not invented — but this client targets the B2C port
 of those routes (`platform-mcp`, DESIGN.md 2.3). Auth is a Cognito **access** token in
@@ -37,9 +43,16 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 SERVER_NAME = "helical"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.1.1-preview.1"
 LATEST_PROTOCOL = "2025-06-18"
 SUPPORTED_PROTOCOLS = {"2024-11-05", "2025-03-26", LATEST_PROTOCOL}
+PRO_FORMA_MODE = "--reference-adapter" not in sys.argv[1:]
+PRO_FORMA_MESSAGE = (
+    "Not implemented yet. This is a pro forma Helical Platform preview; no action was taken."
+)
+PRO_FORMA_DESCRIPTION = (
+    "Preview only: this tool returns 'Not implemented yet' and performs no action. "
+)
 # Route group. The B2C port is the target; `/api/agentcore-mcp` is the surface that
 # exists today and still wants scope in the URL, so some tools will not work against it.
 API_ROOT = os.environ.get("HELICAL_API_ROOT", "/api/platform-mcp").rstrip("/")
@@ -733,11 +746,36 @@ INSTRUCTIONS = (
     "/projects/<project>/data. Never print credentials or raw upstream errors."
 )
 
+PRO_FORMA_INSTRUCTIONS = (
+    "This is a pro forma Helical Platform preview. Tool discovery is available so the "
+    "installation and intended interface can be evaluated, but no tool is implemented. "
+    "Every declared tool call returns 'Not implemented yet', uses no credentials, makes "
+    "no network request, and performs no action. Call at most one matching tool when the "
+    "user explicitly asks to exercise the preview, then report that execution is unavailable."
+)
+
 
 def _tool_result(value: Any) -> dict[str, Any]:
     return {
         "content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False)}],
         "structuredContent": value if isinstance(value, dict) else {"result": value},
+    }
+
+
+def _listed_tools() -> list[dict[str, Any]]:
+    """Advertise the same future contract while making preview behavior unmistakable."""
+    if not PRO_FORMA_MODE:
+        return TOOLS
+    return [
+        {**tool, "description": f"{PRO_FORMA_DESCRIPTION}{tool['description']}"}
+        for tool in TOOLS
+    ]
+
+
+def _pro_forma_result() -> dict[str, Any]:
+    return {
+        "content": [{"type": "text", "text": PRO_FORMA_MESSAGE}],
+        "isError": True,
     }
 
 
@@ -757,27 +795,46 @@ def _handle(message: dict[str, Any]) -> dict[str, Any] | None:
                 "protocolVersion": protocol,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
-                "instructions": INSTRUCTIONS,
+                "instructions": PRO_FORMA_INSTRUCTIONS if PRO_FORMA_MODE else INSTRUCTIONS,
             },
         }
     if method == "ping":
         return {"jsonrpc": "2.0", "id": request_id, "result": {}}
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": _listed_tools()}}
     if method == "tools/call":
         params = message.get("params", {})
+        if not isinstance(params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "Tool call params must be an object."},
+            }
         name = params.get("name")
         arguments = params.get("arguments", {})
-        if not isinstance(arguments, dict):
-            result = {
-                "content": [{"type": "text", "text": "Tool arguments must be an object."}],
-                "isError": True,
+        if not isinstance(name, str):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "Tool name must be a string."},
             }
+        if not isinstance(arguments, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "Tool arguments must be an object."},
+            }
+        handler = HANDLERS.get(name)
+        if handler is None:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": f"Unknown tool: {name}"},
+            }
+        elif PRO_FORMA_MODE:
+            result = _pro_forma_result()
         else:
             try:
-                handler = HANDLERS.get(name)
-                if handler is None:
-                    raise ToolError("Unknown tool.")
                 result = _tool_result(handler(arguments))
             except ToolError as error:
                 result = {"content": [{"type": "text", "text": str(error)}], "isError": True}

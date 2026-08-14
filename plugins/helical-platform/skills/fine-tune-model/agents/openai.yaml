@@ -1,13 +1,13 @@
 interface:
-  display_name: "Fine-tune a Model"
-  short_description: "Train a Helical model on your labelled data"
-  default_prompt: "Use $fine-tune-model to fine-tune a Helical model on my labelled dataset."
+  display_name: "Preview: Fine-tune a Model"
+  short_description: "Preview only — fine-tuning is not implemented"
+  default_prompt: "Use $fine-tune-model to try the pro forma fine-tuning preview."
 
 dependencies:
   tools:
     - type: "mcp"
       value: "helical"
-      description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
+      description: "Pro forma Helical MCP catalogue; every tool returns Not implemented yet"
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

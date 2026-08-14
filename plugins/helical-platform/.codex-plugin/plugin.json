@@ -1,7 +1,7 @@
 {
   "name": "helical-platform",
-  "version": "0.1.0",
-  "description": "Compute embeddings and fine-tune Helical foundation models \u2014 hosted and billed per token, or locally on your own GPU with the open-source package.",
+  "version": "0.1.1-preview.1",
+  "description": "Pro forma preview of Helical foundation-model workflows; all tools return Not implemented yet.",
   "author": {
     "name": "Helical",
     "email": "support@helical-ai.com",
@@ -21,19 +21,17 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Helical Platform",
-    "shortDescription": "Embed and fine-tune with Helical models",
-    "longDescription": "Upload single-cell datasets, pick a Helical foundation model, see the per-token cost before you commit, compute embeddings or fine-tune on your own labels, and download the results \u2014 or run the same models locally on your own GPU with the open-source helical package, at no cost and without your data leaving your machine.",
+    "displayName": "Helical Platform Preview",
+    "shortDescription": "Preview only \u2014 tools are not implemented",
+    "longDescription": "Internal pro forma preview of the planned Helical Platform plugin. It exposes the intended workflow and MCP tool catalogue for installation and interface testing, but every tool returns Not implemented yet. It uses no credentials, sends no data, and performs no action.",
     "developerName": "Helical",
     "category": "Productivity",
-    "capabilities": [
-      "Read"
-    ],
+    "capabilities": [],
     "websiteURL": "https://helical.bio",
     "defaultPrompt": [
-      "Embed my dataset with a Helical model.",
-      "Fine-tune a model on my labelled dataset.",
-      "Run a Helical model locally on my own GPU."
+      "Show me the Helical Platform preview.",
+      "Try the preview embedding workflow.",
+      "Try the preview fine-tuning workflow."
     ]
   }
 }

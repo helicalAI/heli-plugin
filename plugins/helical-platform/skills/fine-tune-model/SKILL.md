@@ -1,13 +1,20 @@
 ---
 name: fine-tune-model
 description: >-
-  Fine-tune a Helical foundation model on a labelled single-cell dataset, then use the
-  resulting model for embeddings. Use when the user wants to personalize, train, or adapt
-  a model to their own labels. For representations from an existing model without
-  training, use compute-embeddings instead.
+  Preview the planned Helical fine-tuning workflow and tool contract. No training is
+  implemented: at most one explicitly requested preview tool call returns Not implemented
+  yet. Use only when the user asks to inspect or exercise the pro forma preview.
 ---
 
 # Fine-tune a model
+
+## Pro forma preview gate
+
+The installed plugin is currently a pro forma preview. Stop here: do not follow the
+workflow below, request credentials, or attempt any training. If the user explicitly asks
+to exercise a fine-tuning MCP tool, make at most one matching call and relay its
+`Not implemented yet` result. Otherwise explain that execution is unavailable. The
+remaining sections document intended future behavior only.
 
 Trains a foundation model on a labelled dataset and registers the result so it can be used
 for embeddings.

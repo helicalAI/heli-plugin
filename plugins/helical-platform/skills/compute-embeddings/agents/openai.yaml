@@ -1,13 +1,13 @@
 interface:
-  display_name: "Compute Embeddings"
-  short_description: "Embed a dataset with a Helical foundation model"
-  default_prompt: "Use $compute-embeddings to embed my dataset with a Helical model."
+  display_name: "Preview: Compute Embeddings"
+  short_description: "Preview only — embedding is not implemented"
+  default_prompt: "Use $compute-embeddings to try the pro forma embedding preview."
 
 dependencies:
   tools:
     - type: "mcp"
       value: "helical"
-      description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
+      description: "Pro forma Helical MCP catalogue; every tool returns Not implemented yet"
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

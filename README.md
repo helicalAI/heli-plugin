@@ -1,8 +1,11 @@
 # Helical Platform plugin
 
-MCP plugin giving individual users metered, per-token access to the Helical platform:
-**compute embeddings** for a single-cell dataset with a foundation model, and **fine-tune**
-a model on your own labelled data.
+The distributable plugin is currently an **internal pro forma preview**. It exposes the
+planned skills and sixteen-tool MCP catalogue so installation, discovery, prompts, and
+error presentation can be tested. Every declared tool call returns `Not implemented yet`
+before tool-schema or business validation and before networking; it needs no credentials
+and performs no action. The
+remaining documentation describes the production design that will replace this preview.
 
 The consolidated architecture, identity, metering, security, and artifact blueprint is in
 [`DESIGN.md`](DESIGN.md); the phased delivery plan is in [`PLAN.md`](PLAN.md).
@@ -12,8 +15,8 @@ The consolidated architecture, identity, metering, security, and artifact bluepr
 ```text
 plugins/helical-platform/
 ├── .codex-plugin/plugin.json   # plugin manifest
-├── .mcp.json                   # launches the local MCP server for development
-├── mcp/server.py               # dependency-free STDIO adapter over the platform API
+├── .mcp.json                   # launches the STDIO server in default preview mode
+├── mcp/server.py               # preview server + future API adapter reference
 ├── skills/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
 │   ├── fine-tune-model/        # hosted: labelled dataset → trained, registered model
@@ -23,9 +26,9 @@ plugins/helical-platform/
 
 ## Tool surface
 
-Sixteen tools. Tool shapes follow the dashboard's `agentcore-mcp` routes — paths,
-parameter names and response fields are taken from them — but the target is the B2C port
-of those routes.
+Sixteen tools. The preview advertises their intended schemas but does not execute them.
+Tool shapes follow the dashboard's `agentcore-mcp` routes — paths, parameter names and
+response fields are taken from them — but the future target is the B2C port of those routes.
 
 | Group | Tools |
 |---|---|
@@ -116,6 +119,11 @@ cap, a 30-second timeout, and errors surfaced as the API's short `error` string 
 `detail` field dropped, since that can carry Zod issues or exception text. In production the MCP endpoint is served by the
 **dashboard itself** — a Streamable HTTP route in the same group as the tool routes.
 
+The checked-in `.mcp.json` launches the scaffold in its safe default preview mode. MCP
+initialization, ping, and tool discovery work normally; declared tool calls short-circuit
+to a stable error without reading credentials or calling an API. The unfinished reference
+adapter requires the explicit development-only `--reference-adapter` flag.
+
 **Authentication follows the MCP OAuth proxy already provisioned per tenant**
 (`infra/modules/tenant/user_pool_client_mcp.tf`, enabled on stage), which is the source of
 truth: it presents the dynamic-registration surface MCP clients expect and Cognito does not,
@@ -127,33 +135,40 @@ concept, but "helical-mcp" in `infra` is that live proxy. See DESIGN.md §2, §3
 
 ## Local development
 
-Keep secrets out of the repo; configure via environment:
+The shipped preview needs `uv` and a preinstalled system Python (3.10 or newer); it runs
+offline, disables managed-Python downloads, reads no credentials, and performs no
+configured API call. To exercise the unfinished reference adapter directly, pass
+`--reference-adapter` and keep secrets out of the repo:
 
 ```sh
 export HELICAL_API_BASE_URL="https://platformdev.helical-ai.bio"   # dashboard origin
 export HELICAL_API_TOKEN="a-cognito-bearer-token"
 # export HELICAL_API_ROOT="/api/agentcore-mcp"   # the older, scope-in-URL surface
+uv run --no-project python plugins/helical-platform/mcp/server.py --reference-adapter
 ```
 
 ## Validate
 
 ```sh
 uv run python -m unittest discover -s plugins/helical-platform/tests -v
-python3 /path/to/plugin-creator/scripts/validate_plugin.py plugins/helical-platform
-python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/compute-embeddings
-python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/fine-tune-model
+uv run --with pyyaml python /path/to/plugin-creator/scripts/validate_plugin.py plugins/helical-platform
+uv run python /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/compute-embeddings
+uv run python /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platform/skills/fine-tune-model
 ```
 
-Publisher, support, repository and licence metadata are real — the repo is **proprietary, all rights reserved** ([LICENSE](LICENSE)). Still open before distribution: the privacy policy and terms URLs, whether `capabilities` should say more than `Read` for a plugin that starts billable runs, and the end-user grant the current licence deliberately withholds.
+Publisher, support, repository and licence metadata are real — the repo is **proprietary,
+all rights reserved** ([LICENSE](LICENSE)). The preview declares no capabilities because it
+performs no actions. Privacy and terms URLs, production capability labels, and an end-user
+licence grant remain open before a functional or public distribution.
 
 ## Add to a repo marketplace
 
-Create `.agents/plugins/marketplace.json` at the repository root:
+The repository includes `.agents/plugins/marketplace.json`:
 
 ```json
 {
-  "name": "local-examples",
-  "interface": { "displayName": "Local Examples" },
+  "name": "helical-internal",
+  "interface": { "displayName": "Helical Internal" },
   "plugins": [
     {
       "name": "helical-platform",
@@ -168,6 +183,13 @@ Create `.agents/plugins/marketplace.json` at the repository root:
 }
 ```
 
-Restart the desktop app, install the plugin from the local marketplace, and test it in a
-new task. `ON_INSTALL` is used because configuration is required before either workflow
-can succeed.
+Register this non-default repo marketplace, install the preview, restart the desktop app,
+and test it in a new task:
+
+```sh
+codex plugin marketplace add /absolute/path/to/heli-plugin
+codex plugin add helical-platform@helical-internal
+```
+
+The marketplace keeps the standard `ON_INSTALL` policy for the eventual authenticated
+plugin, but the preview itself requests no configuration or credentials.

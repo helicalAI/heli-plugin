@@ -1,7 +1,7 @@
 interface:
-  display_name: "Run Helical Locally"
-  short_description: "Use the open-source package on your own GPU"
-  default_prompt: "Use $run-helical-locally to run a Helical model on my own machine."
+  display_name: "Preview: Run Helical Locally"
+  short_description: "Preview only — local execution is not implemented"
+  default_prompt: "Use $run-helical-locally to inspect the pro forma local-run preview."
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

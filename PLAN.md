@@ -12,6 +12,13 @@ Decisions (from DESIGN.md, confirmed by the product owner):
 - **Token accounting is deterministic**: each row/cell costs a fixed number of tokens per model (data-prep + tokenizer dependent). Total = per-row factor × row count (× epochs for fine-tuning, × genes-to-perturb for perturbation, later). Estimate ≡ actual, so **billing needs no dags-repo change** and the debit can happen at launch.
 - Prepaid credits; **Stripe** top-up behind a provider interface (#1838, decided); free monthly grant supported in schema, enablement is a launch parameter.
 - **Two metering systems coexist, and they treat a deleted run oppositely** (DESIGN §5.6). ISP credits are *derived* from `run_meta`, so a delete erased the charge — hence #1927/#1978's soft delete. The money ledger is *recorded* in its own append-only table, so it does not need that protection and must not be built assuming it. They overlap only at `dag_id = 'perturbation'`, i.e. roadmap stage 3.
+- **Current internal distribution is pro forma.** `.mcp.json` launches the local STDIO
+  server in its default preview mode: discovery exposes the planned catalogue, while every tool
+  call returns `Not implemented yet` before tool-schema or business validation,
+  credentials, or networking. The
+  packaged skills stop at an explicit preview gate and disable implicit invocation. The
+  unfinished API adapter requires `--reference-adapter`. This permits marketplace and
+  workspace testing without implying that the dashboard or billing surface exists.
 - **Downloads return run outputs only, and uploaded inputs are never deleted** (#1972, DESIGN §5.7). Storage is therefore a monotonic, unpriced cost line that the token ledger cannot see, and a per-user cap is an open decision rather than a detail.
 - **Confirmation reuses the existing `PendingConfirmation` queue, carried over MCP** rather than rendered in a dashboard chat (DESIGN §6.1). `start_*` prices, enqueues and returns the confirmation; a B2C-only `resolveConfirmation` tool approves or rejects and returns the `run_id`. Supersedes the earlier prompt-level decision, whose only real blocker turned out to be the rendering. Mitigations still hold as second line: balance ceiling, per-user concurrent-run cap.
 

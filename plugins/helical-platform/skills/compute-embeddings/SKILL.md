@@ -1,13 +1,20 @@
 ---
 name: compute-embeddings
 description: >-
-  Compute cell embeddings for a single-cell dataset with a Helical foundation model, then
-  locate the outputs. Use when the user wants embeddings, representations, or features
-  from a dataset already in the platform catalogue. For training a model on labelled data,
-  use fine-tune-model instead.
+  Preview the planned Helical cell-embedding workflow and tool contract. No computation is
+  implemented: at most one explicitly requested preview tool call returns Not implemented
+  yet. Use only when the user asks to inspect or exercise the pro forma preview.
 ---
 
 # Compute embeddings
+
+## Pro forma preview gate
+
+The installed plugin is currently a pro forma preview. Stop here: do not follow the
+workflow below, request credentials, or attempt any computation. If the user explicitly
+asks to exercise an embedding MCP tool, make at most one matching call and relay its
+`Not implemented yet` result. Otherwise explain that execution is unavailable. The
+remaining sections document intended future behavior only.
 
 Turns a catalogue dataset plus a foundation model into an embedding matrix and a UMAP.
 

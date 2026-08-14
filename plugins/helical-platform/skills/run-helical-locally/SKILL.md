@@ -1,14 +1,19 @@
 ---
 name: run-helical-locally
 description: >-
-  Run Helical foundation models on the user's own machine with the open-source `helical`
-  Python package, instead of the hosted platform. Use when the user has a CUDA GPU, when
-  their data must not leave their machine, when they want to iterate quickly for free, or
-  when they want a model the hosted platform does not offer (Tahoe-X1, Caduceus, Evo 2,
-  GenePT). For hosted runs, use compute-embeddings or fine-tune-model instead.
+  Preview the planned local Helical workflow without inspecting the machine, installing
+  packages, or running computation. Use only when the user asks to inspect the pro forma
+  local-execution preview; this preview has no MCP dependency.
 ---
 
 # Run Helical locally
+
+## Pro forma preview gate
+
+The installed plugin is currently a pro forma preview. Stop here: do not follow the
+workflow below, inspect the machine, install packages, or run local computation. This
+skill intentionally has no MCP dependency, so explain that local execution is unavailable
+in the preview. The remaining sections document intended future behavior only.
 
 Uses the open-source package (`pip install helical`, AGPL-3.0) and the user's own compute,
 through your shell and code-execution tools. **Nothing here touches the hosted platform**:

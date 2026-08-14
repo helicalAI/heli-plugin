@@ -58,10 +58,100 @@ class ProtocolTests(unittest.TestCase):
             self.assertFalse(tool["inputSchema"]["additionalProperties"], tool["name"])
 
     def test_instructions_put_the_confirmation_duty_on_the_agent(self):
-        response = server._handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        with patch.object(server, "PRO_FORMA_MODE", False):
+            response = server._handle(
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+            )
         instructions = response["result"]["instructions"]
         self.assertIn("explicit yes", instructions)
         self.assertIn("cannot choose a project", instructions)
+
+    def test_non_preview_tool_calls_still_reach_the_reference_adapter(self):
+        with patch.object(server, "PRO_FORMA_MODE", False), patch.object(
+            server, "_list_models", return_value={"models": []}
+        ) as handler, patch.dict(
+            server.HANDLERS, {"list_models": server._list_models}
+        ):
+            response = server._handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "list_models", "arguments": {}},
+                }
+            )
+        handler.assert_called_once_with({})
+        self.assertEqual(response["result"]["structuredContent"], {"models": []})
+        self.assertNotIn("isError", response["result"])
+
+
+class ProFormaTests(unittest.TestCase):
+    def _handle(self, message):
+        with patch.object(server, "PRO_FORMA_MODE", True), patch.dict(
+            os.environ, {}, clear=True
+        ), patch.object(server, "_open") as opened:
+            response = server._handle(message)
+        opened.assert_not_called()
+        return response
+
+    def test_discovery_remains_available_and_is_honest(self):
+        initialized = self._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        )
+        self.assertIn("pro forma", initialized["result"]["instructions"])
+        self.assertIn("no network request", initialized["result"]["instructions"])
+
+        listed = self._handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = listed["result"]["tools"]
+        self.assertEqual({tool["name"] for tool in tools}, set(server.HANDLERS))
+        for tool in tools:
+            self.assertTrue(tool["description"].startswith("Preview only:"), tool["name"])
+
+    def test_preview_is_the_safe_default(self):
+        self.assertTrue(server.PRO_FORMA_MODE)
+
+    def test_every_declared_tool_short_circuits_before_validation_or_network(self):
+        for tool in server.TOOLS:
+            with self.subTest(tool=tool["name"]):
+                response = self._handle(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {"name": tool["name"], "arguments": {}},
+                    }
+                )
+                result = response["result"]
+                self.assertTrue(result["isError"])
+                self.assertEqual(
+                    result["content"],
+                    [{"type": "text", "text": server.PRO_FORMA_MESSAGE}],
+                )
+                self.assertNotIn("structuredContent", result)
+
+    def test_an_undeclared_tool_is_a_protocol_error(self):
+        response = self._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "future_tool", "arguments": {}},
+            }
+        )
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertEqual(response["error"]["message"], "Unknown tool: future_tool")
+
+    def test_structurally_invalid_arguments_are_a_protocol_error(self):
+        response = self._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "list_models", "arguments": "not-an-object"},
+            }
+        )
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertEqual(response["error"]["message"], "Tool arguments must be an object.")
 
 
 class ConfigurationTests(unittest.TestCase):
