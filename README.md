@@ -145,28 +145,26 @@ python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platfor
 
 Publisher, support, repository and licence metadata are real — the repo is **proprietary, all rights reserved** ([LICENSE](LICENSE)). Still open before distribution: the privacy policy and terms URLs, whether `capabilities` should say more than `Read` for a plugin that starts billable runs, and the end-user grant the current licence deliberately withholds.
 
-## Add to a repo marketplace
+## Install
 
-Create `.agents/plugins/marketplace.json` at the repository root:
+The marketplace manifest ships in the repo at [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json),
+so there is nothing to create by hand. Register the catalog, then install the plugin from it:
 
-```json
-{
-  "name": "local-examples",
-  "interface": { "displayName": "Local Examples" },
-  "plugins": [
-    {
-      "name": "helical-platform",
-      "source": { "source": "local", "path": "./plugins/helical-platform" },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
+```sh
+codex plugin marketplace add helicalAI/heli-plugin --ref main
+codex plugin add helical-platform@helical-bio
 ```
 
-Restart the desktop app, install the plugin from the local marketplace, and test it in a
-new task. `ON_INSTALL` is used because configuration is required before either workflow
-can succeed.
+To work against a checkout instead — so edits are picked up without a push — point the
+marketplace at the working tree. The manifest resolves its plugin by relative path, so the
+same file serves both routes:
+
+```sh
+codex plugin marketplace add /path/to/heli-plugin
+codex plugin add helical-platform@helical-bio
+```
+
+Restart the desktop app and test the plugin in a new task. `ON_INSTALL` is used because
+configuration is required before either workflow can succeed: export
+`HELICAL_API_BASE_URL` and `HELICAL_API_TOKEN` (see [Local development](#local-development))
+before the first tool call, or every hosted tool returns an auth error.
