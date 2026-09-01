@@ -145,28 +145,9 @@ python3 /path/to/skill-creator/scripts/quick_validate.py plugins/helical-platfor
 
 Publisher, support, repository and licence metadata are real — the repo is **proprietary, all rights reserved** ([LICENSE](LICENSE)). Still open before distribution: the privacy policy and terms URLs, whether `capabilities` should say more than `Read` for a plugin that starts billable runs, and the end-user grant the current licence deliberately withholds.
 
-## Add to a repo marketplace
+## Installing it in codex cli locally
 
-Create `.agents/plugins/marketplace.json` at the repository root:
-
-```json
-{
-  "name": "local-examples",
-  "interface": { "displayName": "Local Examples" },
-  "plugins": [
-    {
-      "name": "helical-platform",
-      "source": { "source": "local", "path": "./plugins/helical-platform" },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
+```sh
+codex plugin marketplace add . # will install ./.agents/plugins/marketplace.json
+codex plugin add helical-platform@local-examples
 ```
-
-Restart the desktop app, install the plugin from the local marketplace, and test it in a
-new task. `ON_INSTALL` is used because configuration is required before either workflow
-can succeed.

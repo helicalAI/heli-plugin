@@ -1,6 +1,6 @@
 {
-  "name": "local-examples",
-  "interface": { "displayName": "Local Examples" },
+  "name": "helical-marketplace",
+  "interface": { "displayName": "Helical Marketplace" },
   "plugins": [
     {
       "name": "helical-platform",
