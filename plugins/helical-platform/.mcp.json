@@ -1,10 +1,8 @@
 {
   "mcpServers": {
     "helical": {
-      "command": "python3",
-      "args": ["./mcp/server.py"],
-      "cwd": ".",
-      "env_vars": ["HELICAL_API_BASE_URL", "HELICAL_API_TOKEN"]
+      "type": "http",
+      "url": "https://api.helical-ai.bio/mcp"
     }
   }
 }
