@@ -16,6 +16,9 @@ venv/
 # Local agent settings
 .claude/
 
+# IDE files
+.idea/
+
 # Reference test prompts. Not tracked: the tables are replicated verbatim in
 # DESIGN.md §12.2, which is what reviewers read, and a binary diffs opaquely.
 helical_test_prompts.xlsx
