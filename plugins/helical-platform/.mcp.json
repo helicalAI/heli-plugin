@@ -2,7 +2,7 @@
   "mcpServers": {
     "helical": {
       "type": "http",
-      "url": "https://api.helical-ai.bio/mcp"
+      "url": "https://api.helical.bio/mcp"
     }
   }
 }
