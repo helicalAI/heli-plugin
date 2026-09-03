@@ -1,0 +1,7 @@
+interface:
+  display_name: "Check Credits"
+  short_description: "Find the credits, usage and top-up pages, and read a refusal correctly"
+  default_prompt: "Use $check-credits to show me how to check my Helical credits and top up."
+
+policy:
+  allow_implicit_invocation: true

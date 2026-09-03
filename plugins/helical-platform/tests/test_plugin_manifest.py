@@ -32,9 +32,11 @@ MANIFEST = json.loads(MANIFEST_TEXT)
 MCP_JSON = json.loads(MCP_JSON_PATH.read_text())
 SKILL_DIRS = sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir())
 
-# The skills that drive the hosted API, and the one that must not.
+# The skills that drive the hosted API, the one that must not, and the one that
+# answers from the site's own pages because no tool here reads a credit balance.
 HOSTED_SKILLS = {"compute-embeddings", "fine-tune-model"}
 LOCAL_SKILL = "run-helical-locally"
+SITE_SKILL = "check-credits"
 
 # Hosts Helical controls. A URL outside this set in shipped metadata is either a
 # leftover placeholder or a typo'd domain someone else could register.
@@ -187,7 +189,7 @@ class ManifestMetadataTests(unittest.TestCase):
 
 class SkillStructureTests(unittest.TestCase):
     def test_there_are_skills_to_check(self):
-        self.assertEqual({p.name for p in SKILL_DIRS}, HOSTED_SKILLS | {LOCAL_SKILL})
+        self.assertEqual({p.name for p in SKILL_DIRS}, HOSTED_SKILLS | {LOCAL_SKILL, SITE_SKILL})
 
     def test_frontmatter_name_matches_the_directory(self):
         for skill_dir in SKILL_DIRS:
@@ -241,6 +243,20 @@ class ToolWiringTests(unittest.TestCase):
         as an instruction to the agent just as much as `list_datasets({...})`."""
         text = (SKILLS_DIR / LOCAL_SKILL / "SKILL.md").read_text()
         self.assertEqual(tool_mentions(text), set())
+
+    def test_the_site_skill_declares_no_tools_while_no_balance_tool_exists(self):
+        """It answers with the site's own routes because there is nothing to call:
+        no tool on this surface reports a credit balance. The second assertion is the
+        tripwire — the day a balance tool is added, this fails, and the skill has to
+        stop pointing at a page and start reading the figure."""
+        config = agent_config(SKILLS_DIR / SITE_SKILL)
+        self.assertEqual(declared_mcp_servers(config), [])
+        self.assertEqual(
+            {name for name in TOOL_NAMES if "credit" in name or "balance" in name},
+            set(),
+            "a balance tool exists now — check-credits must call it instead of "
+            "telling the user to read the figure off the site",
+        )
 
     def test_every_tool_name_matches_the_prefix_convention(self):
         """`tool_like_tokens` keys off these verbs, so a tool added under a new
