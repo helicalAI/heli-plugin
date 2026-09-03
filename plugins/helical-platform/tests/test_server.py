@@ -260,6 +260,26 @@ class ErrorMappingTests(unittest.TestCase):
         self.assertIn("Dataset not found", str(error))
         self.assertNotIn("prisma", str(error))
 
+    def test_402_surfaces_the_dashboards_prose_because_detail_is_all_there_is(self):
+        error = self._error(402, {
+            "error": "insufficient_balance",
+            "detail": "Insufficient credit for this run (missing 7.388 credits). Add credit "
+                      "at https://dash.example.test/top-up/abc123",
+        })
+        self.assertIn("missing 7.388 credits", str(error))
+        self.assertIn("https://dash.example.test/top-up/abc123", str(error))
+
+    def test_402_without_a_usable_detail_still_says_what_to_do(self):
+        for body in ({"error": "insufficient_balance"},
+                     {"error": "insufficient_balance", "detail": {"missing": 7.388}},
+                     {"error": "insufficient_balance", "detail": "   "}):
+            with self.subTest(body=body):
+                error = self._error(402, body)
+                self.assertIn("insufficient credit", str(error))
+                self.assertIn("Add credit", str(error))
+        error = server._http_error(HTTPError("https://d.test", 402, "", {}, None))
+        self.assertIn("insufficient credit", str(error))
+
     def test_401_explains_the_token_rather_than_echoing_upstream(self):
         error = self._error(401, {"error": "Invalid JWT"})
         self.assertIn("Cognito access token", str(error))
