@@ -132,19 +132,33 @@ def _http_error(error: HTTPError) -> ToolError:
     """Map the API's `{error, detail}` body onto a safe message.
 
     `error` is a short human string the routes choose deliberately, so it is safe to
-    surface. `detail` can carry Zod issues or upstream exception text, so it is dropped.
+    surface. `detail` can carry Zod issues or upstream exception text, so it is dropped —
+    everywhere but 402, the one documented exception. There `error` is the bare slug
+    `insufficient_balance` and `detail` is the only prose there is: the shortfall and the
+    top-up URL the user has to act on. Dropping it would leave the agent nothing to relay.
     """
     summary = ""
+    detail = ""
     try:
         body = json.loads(error.read(20_000))
-        if isinstance(body, dict) and isinstance(body.get("error"), str):
-            summary = body["error"]
+        if isinstance(body, dict):
+            if isinstance(body.get("error"), str):
+                summary = body["error"]
+            if isinstance(body.get("detail"), str):
+                detail = body["detail"].strip()
     except Exception:  # noqa: BLE001 - never let error parsing mask the original failure
         summary = ""
+        detail = ""
 
     if error.code == 401:
         return ToolError(
             "Not authenticated. HELICAL_API_TOKEN must be a current Cognito access token."
+        )
+    if error.code == 402:
+        return ToolError(
+            detail
+            or "The account has insufficient credit for this run. Add credit in the "
+            "Helical dashboard, then try again."
         )
     if error.code == 403:
         return ToolError(summary or "Not permitted for this account.")
