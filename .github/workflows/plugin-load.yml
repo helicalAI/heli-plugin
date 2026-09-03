@@ -1,7 +1,10 @@
 name: plugin-load
 
+# push is scoped to the long-lived branches: a feature branch with an open PR
+# fires both events otherwise, and every run is duplicated.
 on:
   push:
+    branches: [develop, main]
   pull_request:
 
 jobs:
@@ -14,6 +17,7 @@ jobs:
 
       - run: |
           export CODEX_HOME="$RUNNER_TEMP/codex"
+          mkdir -p "$CODEX_HOME"   # codex resolves CODEX_HOME, it does not create it
           codex plugin marketplace add . --json
           codex plugin add helical-platform@helical-marketplace
           codex plugin list --json | tee /dev/stderr | grep -q '"version": "0.2.0"'
