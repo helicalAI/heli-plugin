@@ -1,6 +1,6 @@
 {
   "name": "helical-platform",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compute embeddings and fine-tune Helical foundation models \u2014 hosted and billed per token, or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
