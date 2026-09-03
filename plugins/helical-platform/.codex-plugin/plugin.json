@@ -33,7 +33,8 @@
     "defaultPrompt": [
       "Embed my dataset with a Helical model.",
       "Fine-tune a model on my labelled dataset.",
-      "Run a Helical model locally on my own GPU."
+      "Run a Helical model locally on my own GPU.",
+      "Check my Helical credits and top up."
     ]
   }
 }
