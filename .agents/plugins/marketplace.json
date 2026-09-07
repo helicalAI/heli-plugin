@@ -1,9 +1,9 @@
 {
-  "name": "helical-marketplace",
+  "name": "helical-marketplace-stage",
   "interface": { "displayName": "Helical Marketplace" },
   "plugins": [
     {
-      "name": "helical-platform",
+      "name": "helical-platform-stage",
       "source": { "source": "local", "path": "./plugins/helical-platform" },
       "policy": {
         "installation": "AVAILABLE",

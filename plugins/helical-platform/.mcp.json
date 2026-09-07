@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "helical": {
+    "helical-stage": {
       "type": "http",
-      "url": "https://api.helical.bio/mcp"
+      "url": "https://mcpstage.helical.bio/mcp"
     }
   }
 }

@@ -7,7 +7,7 @@ description: >-
   401, "OAuth authorization required", "Missing Bearer token", "Invalid JWT" or a host's
   paraphrase of one of those ("This request requires more information"); when a Helical
   call fails in a way that does not say whether authentication is the cause; when the
-  helical tools are missing from the session; or when the user asks where to sign in. For
+  helical-stage tools are missing from the session; or when the user asks where to sign in. For
   a run refused over credit, use check-credits.
 ---
 
@@ -20,7 +20,7 @@ do I sign in?" is the one failure this skill exists to prevent.
 
 ## Say where to go, first time
 
-> Your Helical sign-in needs renewing. Sign in again at **console.helical.bio** and I'll
+> Your Helical sign-in needs renewing. Sign in again at **platformstagebri.helical.bio** and I'll
 > pick the embedding estimate back up — nothing has started, so nothing has been charged.
 
 Adapt the four parts; do not reuse the sentence:
@@ -40,7 +40,7 @@ this account and this flow.
 
 ## When the tools are not there at all
 
-No `helical` tools in the session — or the host calling the plugin enabled while reporting
+No `helical-stage` tools in the session — or the host calling the plugin enabled while reporting
 authentication as "unknown" — is this same failure with no error to read. It is not a
 reason to investigate the endpoint: a `405` to a plain `GET` proves only that the URL is
 up, and says nothing about whether the user is signed in. Give the destination anyway, and
@@ -48,7 +48,7 @@ say that a new session is needed, because hosts load their tool surface at sessi
 and signing in now will not populate this one:
 
 > None of the Helical tools loaded here, which means this connection is not signed in.
-> Sign in at **console.helical.bio**, then start a new session and ask me for the health
+> Sign in at **platformstagebri.helical.bio**, then start a new session and ask me for the health
 > check again — reconnecting mid-session will not bring the tools back.
 
 "Reconnect or reload the plugin" without an address is the failure this replaces: it names
@@ -61,7 +61,7 @@ Any OAuth code, by definition: `invalid_grant`, `invalid_request`, `invalid_clie
 you called, so its arguments are never the problem. Hosts paraphrase the code and discard
 the description that explained it — **"This request requires more information" is
 `invalid_request`** — so treat the paraphrase as the code. Also a `401`, "OAuth
-authorization required", "Missing Bearer token", "Invalid JWT", or the `helical` tools
+authorization required", "Missing Bearer token", "Invalid JWT", or the `helical-stage` tools
 missing from the session entirely.
 
 Not these two: **`402` / `insufficient_balance`** is credit rather than sign-in
@@ -75,10 +75,10 @@ do and do not know, and give the link anyway.
 ## If signing in on the site does not clear it
 
 Then the connection's own stored credential is what is being refused. The plugin talks to
-`api.helical.bio`, and the client — not you — holds the credential for it, so the fix is
-that client's command: `claude mcp login helical`, or `claude mcp logout helical && claude
-mcp login helical` when it is the stored registration being rejected (`invalid_request`,
-`invalid_client`, "not registered"). On Codex, `codex mcp login helical`. On any other
+`mcpstage.helical.bio`, and the client — not you — holds the credential for it, so the fix is
+that client's command: `claude mcp login helical-stage`, or `claude mcp logout helical-stage && claude
+mcp login helical-stage` when it is the stored registration being rejected (`invalid_request`,
+`invalid_client`, "not registered"). On Codex, `codex mcp login helical-stage`. On any other
 host, name that client's own reconnect affordance or say you do not know it — do not invent
 menu items. Run the command yourself if you can: it opens their browser and completes on
 its own callback, so their whole job is approving the page. With no browser on that machine,

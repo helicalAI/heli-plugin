@@ -1,5 +1,5 @@
 {
-  "name": "helical-platform",
+  "name": "helical-platform-stage",
   "version": "0.1.0",
   "description": "Compute embeddings and fine-tune Helical foundation models \u2014 hosted and billed per token, or locally on your own GPU with the open-source package.",
   "author": {
@@ -21,7 +21,7 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Helical Platform",
+    "displayName": "Helical Platform (stage)",
     "shortDescription": "Embed and fine-tune with Helical models",
     "longDescription": "Upload single-cell datasets, pick a Helical foundation model, see the per-token cost before you commit, compute embeddings or fine-tune on your own labels, and download the results \u2014 or run the same models locally on your own GPU with the open-source helical package, at no cost and without your data leaving your machine.",
     "developerName": "Helical",

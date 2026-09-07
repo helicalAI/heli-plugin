@@ -11,9 +11,9 @@ description: >-
 **You cannot read the balance.** Nothing on this surface returns a credit figure, so the
 answer to "how many credits do I have?" is never a number you supply.
 
-Send the user to **console.helical.bio** — the site they signed in to when they connected
+Send the user to **platformstagebri.helical.bio** — the site they signed in to when they connected
 this plugin. Credits, spending, receipts and account settings all live there, and
-`console.helical.bio/docs` covers anything else they ask about the product.
+`platformstagebri.helical.bio/docs` covers anything else they ask about the product.
 
 It is **not** `helical.bio`. That is the marketing site and holds nothing about their
 account; sending them there is the same wrong turn as inventing a menu. Beyond those two

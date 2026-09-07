@@ -240,7 +240,7 @@ class ToolWiringTests(unittest.TestCase):
     def test_hosted_skills_declare_the_helical_server(self):
         for name in sorted(HOSTED_SKILLS):
             with self.subTest(skill=name):
-                self.assertEqual(declared_mcp_servers(agent_config(SKILLS_DIR / name)), ["helical"])
+                self.assertEqual(declared_mcp_servers(agent_config(SKILLS_DIR / name)), list(MCP_JSON["mcpServers"]))
 
     def test_the_local_skill_declares_no_tools_at_all(self):
         """DESIGN 7.2: our server runs on our infrastructure and cannot execute

@@ -6,7 +6,7 @@ interface:
 dependencies:
   tools:
     - type: "mcp"
-      value: "helical"
+      value: "helical-stage"
       description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
 
 policy:
