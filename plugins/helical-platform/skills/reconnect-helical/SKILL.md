@@ -14,8 +14,9 @@ description: >-
 # Reconnect Helical
 
 When a Helical call fails on authentication, **the user's next click belongs in that same
-message.** Leaving them to ask "so where do I sign in?" is the one failure this skill
-exists to prevent.
+message.** No message about a broken Helical connection leaves without the destination in
+it — not even one that cannot say why the connection broke. Leaving them to ask "so where
+do I sign in?" is the one failure this skill exists to prevent.
 
 ## Say where to go, first time
 
@@ -36,6 +37,22 @@ Adapt the four parts; do not reuse the sentence:
 **A link the failure carried beats the site** — a connect URL the platform pushed, the
 top-up link in a credit refusal. Relay that one instead, as it stands: it is specific to
 this account and this flow.
+
+## When the tools are not there at all
+
+No `helical` tools in the session — or the host calling the plugin enabled while reporting
+authentication as "unknown" — is this same failure with no error to read. It is not a
+reason to investigate the endpoint: a `405` to a plain `GET` proves only that the URL is
+up, and says nothing about whether the user is signed in. Give the destination anyway, and
+say that a new session is needed, because hosts load their tool surface at session start
+and signing in now will not populate this one:
+
+> None of the Helical tools loaded here, which means this connection is not signed in.
+> Sign in at **console.helical.bio**, then start a new session and ask me for the health
+> check again — reconnecting mid-session will not bring the tools back.
+
+"Reconnect or reload the plugin" without an address is the failure this replaces: it names
+a chore instead of a destination.
 
 ## Which failures these are
 
@@ -82,6 +99,8 @@ rather than reusing it.
 
 ## Conventions
 
-Where to go, in the first message · the account site unless the platform sent its own link ·
+Where to go, in the first message, always · absent tools are the same failure as a
+rejected one · a new session after signing in, where the host loads tools at start · the
+account site unless the platform sent its own link ·
 plain words, never the OAuth code · "nothing was charged" only when true · the client
 command second, never first · never build a sign-in URL · retry once, then stop.
