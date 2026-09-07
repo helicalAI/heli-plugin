@@ -1,0 +1,7 @@
+interface:
+  display_name: "Reconnect Helical"
+  short_description: "Restore an expired Helical sign-in, with the step in the first message"
+  default_prompt: "Use $reconnect-helical to get my Helical connection signed in again."
+
+policy:
+  allow_implicit_invocation: true
