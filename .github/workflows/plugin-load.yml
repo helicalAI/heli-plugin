@@ -20,15 +20,21 @@ jobs:
           export CODEX_HOME="$RUNNER_TEMP/codex"
           mkdir -p "$CODEX_HOME"   # codex resolves CODEX_HOME, it does not create it
 
+          # Read the identity from the manifests rather than repeating it here. What this
+          # job checks is that the manifests round-trip through the loader, not that the
+          # names are any particular string -- a duplicated literal turns a rename into a
+          # red build that says nothing about whether the plugin loads.
           expected=$(jq -re .version plugins/helical-platform/.codex-plugin/plugin.json)
-          echo "plugin.json declares $expected"
+          marketplace=$(jq -re .name .agents/plugins/marketplace.json)
+          plugin=$(jq -re .name plugins/helical-platform/.codex-plugin/plugin.json)
+          echo "manifests declare $plugin@$marketplace at $expected"
 
           codex plugin marketplace add . --json
-          codex plugin add helical-platform@helical-marketplace
+          codex plugin add "$plugin@$marketplace"
 
           # Assert on `installed`: a local marketplace reports `available: []`
           # even on success, so an emptiness check there would pass vacuously.
           codex plugin list --json | tee /dev/stderr | jq -e \
-            --arg v "$expected" \
-            '.installed | map(select(.name == "helical-platform" and .version == $v)) | length == 1' \
+            --arg n "$plugin" --arg v "$expected" \
+            '.installed | map(select(.name == $n and .version == $v)) | length == 1' \
             > /dev/null
