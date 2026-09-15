@@ -12,13 +12,12 @@ The consolidated architecture, identity, metering, security, and artifact bluepr
 ```text
 plugins/helical-platform/
 ├── .codex-plugin/plugin.json   # plugin manifest
-├── .mcp.json                   # launches the local MCP server for development
-├── mcp/server.py               # dependency-free STDIO adapter over the platform API
+├── .mcp.json                   # the remote MCP endpoint the plugin connects to
 ├── skills/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
 │   ├── fine-tune-model/        # hosted: labelled dataset → trained, registered model
 │   └── run-helical-locally/    # local: the open-source package on the user's own GPU
-└── tests/                     # test_server.py + test_plugin_manifest.py
+└── tests/                     # test_plugin_manifest.py
 ```
 
 ## Tool surface
@@ -52,12 +51,12 @@ The MCP routes still run on the dashboard's APIs and database; what the B2C port
 path, no query, no header, no body — the API resolves the caller's project from the
 verified subject. A transmitted identifier is an input to be validated; a derived one is
 not an input at all, so the class of bug where a caller names someone else's project does
-not exist. Tests assert that no schema exposes scope and that no request carries it.
+not exist. The dashboard's own tests assert that no schema on the surface exposes scope.
 
 **The cost:** the routes that still want scope in the URL — `list_models` and both
 triggers — will fail against `agentcore-mcp` until the port lands. Datasets, run details,
 files, S3 and UMAPs scope from the resource or the caller's memberships and work against
-either. `HELICAL_API_ROOT` selects the route group (default `/api/platform-mcp`).
+either.
 
 There is also no `get_confirmation_status`: the approval queue is conversation-bound, and
 with direct execution there is nothing to poll.
@@ -72,8 +71,8 @@ One estimate endpoint **per operation**, because the token formula differs — r
 coefficient for embedding, × epochs for fine-tuning. Estimates are free, read-only, and
 return a `quote_id` that the matching `start_*` tool **requires**, so a run cannot be
 started without having been priced first. Changing any argument invalidates the quote.
-That makes DESIGN.md §6.1's estimate-before-spend rule structural rather than advisory: a
-test asserts an estimate's body is byte-identical to the run it prices, minus the quote.
+That makes DESIGN.md §6.1's estimate-before-spend rule structural rather than advisory: an
+estimate's body must be byte-identical to the run it prices, minus the quote.
 
 ### Not available on `agentcore-mcp` yet
 
@@ -81,7 +80,7 @@ No balance or billing route; no dataset upload, registration, or presigned
 URL; no artifact download — outputs are reachable only as UTF-8 text under
 `/projects/<project>/data`, capped at 1 MiB, so a binary `.npy` matrix can be located but
 not read. The metered workflow in DESIGN.md §5 and §7 needs all of these, and they arrive
-with the port. The scaffold does not pretend they exist.
+with the port, and the plugin does not advertise them before then.
 
 ## Two backends
 
@@ -108,12 +107,17 @@ several gigabytes. See DESIGN.md §7.2.
 
 ## Surface boundary
 
-The checked-in `mcp/server.py` is the **local-development scaffold** and the reference for
-the transport-safety controls any adapter must keep: HTTPS-only upstream, redirects
-disabled so a redirect cannot forward the bearer token, bounded arguments, a 2 MB response
-cap, a 30-second timeout, and errors surfaced as the API's short `error` string with its
-`detail` field dropped, since that can carry Zod issues or exception text. In production the MCP endpoint is served by the
-**dashboard itself** — a Streamable HTTP route in the same group as the tool routes.
+Any adapter serving this plugin must keep these transport-safety controls: HTTPS-only
+upstream, redirects disabled so a redirect cannot forward the bearer token, bounded
+arguments, a 2 MB response cap, a 30-second timeout, and errors surfaced as the API's short
+`error` string with its `detail` field dropped, since that can carry Zod issues or exception
+text.
+
+The endpoint in `.mcp.json` is served by the **`helical-mcp` service** (`api.helical.bio`,
+`enable_helical_mcp = true` in `infra/envs/prod/btoc-tenant`). It is a FastMCP proxy: it
+terminates MCP over Streamable HTTP and forwards the caller's Cognito bearer to the
+per-tenant AgentCore Gateway, which is backed by the dashboard's tool routes. A native MCP
+route in the dashboard itself is planned (dashboard #1912) and would retire the proxy.
 
 **Authentication follows the MCP OAuth proxy already provisioned per tenant**
 (`infra/modules/tenant/user_pool_client_mcp.tf`, enabled on stage), which is the source of
@@ -121,18 +125,24 @@ truth: it presents the dynamic-registration surface MCP clients expect and Cogni
 holds the one confidential client secret, and proxies Authorization Code + PKCE to the
 Cognito hosted UI. The dashboard verifies the resulting ordinary Cognito access token.
 
-Note the name collision: the `helicalAI/helical-mcp` **repo** is a superseded proof of
-concept, but "helical-mcp" in `infra` is that live proxy. See DESIGN.md §2, §3 and §4.
+Note the name collision: `helicalAI/helical-mcp` is both the live proxy above and the name
+used in `infra`. An older proof of concept under the same name is superseded. See DESIGN.md
+§2, §3 and §4.
 
 ## Local development
 
-Keep secrets out of the repo; configure via environment:
+The plugin holds no credentials. `.mcp.json` names the remote endpoint, and the MCP client
+logs in through the browser: `helical-mcp` presents the dynamic-registration surface Claude
+Code and Codex expect and proxies Authorization Code + PKCE to the Cognito hosted UI.
 
 ```sh
-export HELICAL_API_BASE_URL="https://platformdev.helical-ai.bio"   # dashboard origin
-export HELICAL_API_TOKEN="a-cognito-bearer-token"
-# export HELICAL_API_ROOT="/api/agentcore-mcp"   # the older, scope-in-URL surface
+claude mcp add --transport http --scope user helical https://api.helical.bio/mcp
+# then, inside the client:
+/mcp        # browser opens the Cognito login
 ```
+
+To develop against a non-production deployment, point `.mcp.json` at that tenant's own
+`helical-mcp` URL. Do not commit the change.
 
 ## Validate
 
