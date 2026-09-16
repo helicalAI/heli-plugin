@@ -1,4 +1,4 @@
-name: plugin-load
+name: ci
 
 # push is scoped to the long-lived branches: a feature branch with an open PR
 # fires both events otherwise, and every run is duplicated.
@@ -8,7 +8,7 @@ on:
   pull_request:
 
 jobs:
-  codex-round-trip:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
