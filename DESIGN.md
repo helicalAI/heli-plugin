@@ -85,7 +85,7 @@ The MCP surface **replicates the relevant `agentcore-mcp` routes into a B2C rout
 - `conversationId`-based scoping (used by the chat-bound `agentcore-mcp` routes such as `triggerEmbedding` and `listModels`) is replaced by **subject-derived project resolution** — the MCP caller has no dashboard conversation;
 - **the approval queue is replaced by direct execution** (§6.1), which is what makes the `triggerValidated` helper — present in `agentcore-mcp/airflow/trigger/_helpers.ts` today with zero callsites — finally the one that gets used;
 - **project scope leaves the URL entirely** (§2.3.1);
-- the routes that `agentcore-mcp` simply lacks are added rather than replicated: the cost estimate, the balance read, dataset upload and registration, and artifact download (§8.2 lists the full gap);
+- the routes that `agentcore-mcp` simply lacks are added rather than replicated: the cost estimate, the balance read, dataset upload and registration, and artifact download;
 - generic passthrough, raw queries, project CRUD, and collaboration primitives are omitted;
 - platform failures are normalized into the public error contract (§6) without leaking internal identifiers;
 - the `projectScopeRule` ESLint rule is extended to cover the new route group, so a missing scope predicate fails CI there exactly as it does in the tRPC routers. It has repeatedly caught what it was designed for, and the new surface is precisely where an unscoped query would be most costly;
