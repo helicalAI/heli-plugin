@@ -1,6 +1,6 @@
 # Helical Platform Plugin — Design Blueprint
 
-Status: production design target with a minimal local reference scaffold
+Status: production design target
 Plugin: `helical-platform`
 Version: `0.1.0`
 Last reviewed: 2026-07-30 (amended to resolve design-review comments)
@@ -25,7 +25,9 @@ The central design decision is to keep five concerns separate:
 4. **Metering and billing** record actual token consumption and convert it to charges.
 5. **Per-user project isolation** maps each user to one auto-provisioned platform project (indication) that collects all of their datasets, runs, and results.
 
-Terminology note: this product is **metered**, not "paywalled". An early draft used a generic licensed-content framing (`paywalled-research`, article search tools); that framing is retired and no longer present in the repository. The scaffold now implements the §7 tool contract directly.
+Terminology note: this product is **metered**, not "paywalled". An early draft used a generic
+licensed-content framing (`paywalled-research`, article search tools); that framing is retired and
+no longer present in the repository.
 
 ## 2. Product and platform boundary
 
@@ -50,7 +52,9 @@ Initially, individual users are served by a **new "physical person" tenant**: on
 
 Within this tenant:
 
-- **One project per user, auto-provisioned.** On first authenticated request (or via a Cognito post-confirmation hook), the platform transactionally creates a `Project` and a single `ProjectMembership { userId, projectId, role: EDITOR }`.
+- **One project per user, auto-provisioned.** On first authenticated request (or via a Cognito
+  post-confirmation hook), the platform transactionally creates a `Project` and a single
+  `ProjectMembership { userId, projectId, role: EDITOR }`.
 
   **Slug convention** — an open decision, currently `user-<short-cognito-sub>-01`, `-02`, … A slug must be globally unique, and it is a security principal in S3 paths, so it must be immutable. The indexed form is preferred over a bare `user-<sub>` for two reasons: all of one user's projects sort together, and the owner is recoverable from the slug alone when debugging. **Ship one project per user, but do not make a second one unrepresentable** — `ProjectMembership` is already many-to-many, so multi-project support is a product decision rather than a schema change. Final scheme TBD.
 - **The user owns everything inside it.** All uploaded datasets, embedding runs, artifacts, and downloads are collected in that project.
@@ -529,8 +533,6 @@ This is also where the reference prompts that §12.2 dismissed become directly a
         ├── .codex-plugin/
         │   └── plugin.json
         ├── .mcp.json
-        ├── mcp/
-        │   └── server.py
         ├── skills/
         │   ├── compute-embeddings/
         │   │   ├── SKILL.md
@@ -542,24 +544,11 @@ This is also where the reference prompts that §12.2 dismissed become directly a
         │       ├── SKILL.md
         │       └── agents/openai.yaml
         └── tests/
-            └── test_server.py
+            └── test_plugin_manifest.py
 ```
 
-### 8.2 Scaffold status
 
-The checked-in `mcp/server.py` is a dependency-free STDIO adapter over **the dashboard's existing `agentcore-mcp` API** — sixteen tools, each mapping 1:1 onto a route under `/api/agentcore-mcp/*`, with paths, parameter names, and response shapes taken from those routes rather than invented. Auth is a Cognito access token as `Authorization: Bearer`. It is the local-development scaffold and the specification of the transport-safety controls any adapter must preserve: HTTPS-only upstream, redirects disabled so a redirect cannot forward the bearer token, bounded arguments with unknown ones rejected, a 64 KB request cap and 2 MB response cap, a 30-second timeout, and upstream errors surfaced as their short `error` string with the `detail` field — which can carry Zod issues or exception text — dropped.
-
-**The scaffold therefore reflects today's API, not the target design, and the gap is the point.** Against `agentcore-mcp` as it stands:
-
-- there is **no cost estimate, balance, or billing route of any kind**, so the estimate-then-approve flow in §5.2 and §6.1 cannot be exercised yet;
-- there is **no dataset upload, registration, or presigned URL**, so a user cannot bring their own `.h5ad` through the tool surface;
-- there is **no artifact download**; outputs are reachable only as text under `/projects/<project>/data` via `readDatasetFile`, capped at 1 MiB, which cannot return a binary `.npy` embedding matrix;
-- **triggers do not launch.** Every `trigger*` route enqueues through the approval queue and returns `{status: "pending_approval", confirmation_id}`. `triggerValidated` — the direct-launch helper §2.3 relies on — exists in `_helpers.ts` with zero route callsites;
-- **`conversationId` is required** by `listModels`, both triggers, and `getConfirmationStatus`, and `listDagRuns` requires a caller-supplied `projectId`. Both are exactly the scoping the port replaces with subject-derived resolution.
-
-Those five gaps are the concrete content of the `platform-mcp` port (§2.3, §7.1) and of the billing work in §5. Until it lands, the scaffold is honest about what can actually be done: select a catalogue dataset, choose a model, queue a run for human approval, poll it, and read text outputs.
-
-Its environment variables are `HELICAL_API_BASE_URL` (the dashboard origin), `HELICAL_API_TOKEN`, and `HELICAL_API_ROOT` — the route group, defaulting to `/api/agentcore-mcp`. Values never live in the repo. The client sends `conversationId`/`projectId` only when supplied, so pointing it at the port is a configuration change rather than a rewrite; a test asserts both path shapes.
+### 8.2 Licence and publication status
 
 Publisher, support and repository metadata in `plugin.json` are set, and the repository is **AGPL-3.0-or-later**, declared as `license: "AGPL-3.0-or-later"` — the same copyleft the open-source `helical` package carries, whose LICENCE this one is copied from. Two items remain open before distribution, each a decision rather than an edit: the **privacy policy and terms URLs** (absent rather than guessed at), and whether **`capabilities: ["Read"]`** is honest for a plugin that starts billable runs.
 
@@ -589,6 +578,26 @@ The third skill has no MCP dependency at all, which is the clearest statement of
 
 The first two declare their MCP dependency on the `helical` server in `agents/openai.yaml`; the third deliberately declares none.
 
+### 8.4 Transport
+
+`https://api.helical.bio/mcp` is served by the `helical-mcp` service, deployed to the btoc
+tenant (`enable_helical_mcp = true`, `helical_mcp_public_url` in
+`infra/envs/prod/btoc-tenant/terraform.tfvars`). The domain is minted by that service's ALB
+ingress through external-dns.
+
+The service does two things in one process:
+
+1. **An OAuth front door.** Cognito publishes neither compliant authorization-server metadata nor
+   Dynamic Client Registration, so MCP clients cannot log into it directly. FastMCP's
+   `AWSCognitoProvider` presents the metadata and `/register` the clients expect, translates
+   registration onto one pre-registered confidential Cognito client, and proxies Authorization
+   Code + PKCE to the hosted UI. The client ends up holding an ordinary Cognito access token.
+2. **A token-forwarding proxy.** It forwards each caller's access token as `Authorization: Bearer`
+   to the per-tenant AgentCore Gateway, which re-validates it against the same pool. A caller can
+   therefore only invoke tools acting on their own behalf.
+
+The Cognito client is provisioned by `infra/modules/tenant/user_pool_client_mcp.tf`.
+
 ## 9. Security and privacy requirements
 
 ### Credentials
@@ -616,7 +625,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 ### Input, output, and network controls
 
-- Treat all MCP arguments as untrusted; keep the scaffold's controls in any adapter: bounded lengths and limits, HTTPS-only upstreams, redirects disabled on credential-bearing requests, response-size caps, sanitized errors.
+- Treat all MCP arguments as untrusted. Any adapter must apply: bounded lengths and limits, HTTPS-only upstreams, redirects disabled on credential-bearing requests, response-size caps, sanitized errors.
 - Presigned URLs: short-lived, single-purpose, project-scoped prefixes.
 
 ### Privacy and observability
@@ -631,7 +640,7 @@ The first two declare their MCP dependency on the `helical` server in `agents/op
 
 ### Profile A: local development
 
-- Bundled STDIO scaffold with `HELICAL_API_BASE_URL` / `HELICAL_API_TOKEN` supplied outside the repo, pointed at a dev dashboard with a Cognito bearer (the dashboard repo's `tests/localMcpTest` harness shows the pattern).
+- `.mcp.json` points at the tenant's `helical-mcp` URL. The MCP client obtains its own Cognito token through the browser OAuth flow, so the repo holds no credentials.
 - No signup or billing; fixtures must still exercise cross-project denial.
 
 ### Profile B: enterprise tenants (existing)
@@ -685,7 +694,7 @@ Work is tracked as GitHub epic [helicalAI/dashboard#1756](https://github.com/hel
 
 ## 12. Verification and acceptance criteria
 
-The scaffold's four unit tests, both skill validations, and the plugin validation must keep passing. Before production, add tests for:
+The manifest and skill consistency suite, both skill validations, and the plugin validation must keep passing. Before production, add tests for:
 
 - valid, expired, malformed, wrong-issuer, wrong-client, and wrong-scope Cognito tokens; the client allowlist in `cognito-bearer-auth`;
 - Proxy-mediated DCR + PKCE flow, RFC 9728 discovery, OAuth challenge shape; self-signup followed by authorization continuation;

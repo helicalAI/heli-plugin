@@ -1,0 +1,34 @@
+name: ci
+
+# push is scoped to the long-lived branches: a feature branch with an open PR
+# fires both events otherwise, and every run is duplicated.
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - run: npm i -g @openai/codex@0.153.0     # pin — CLI changes shouldn't break your CI
+
+      - name: Round-trip the marketplace and plugin through the Codex loader
+        run: |
+          export CODEX_HOME="$RUNNER_TEMP/codex"
+          mkdir -p "$CODEX_HOME"   # codex resolves CODEX_HOME, it does not create it
+
+          expected=$(jq -re .version plugins/helical-platform/.codex-plugin/plugin.json)
+          echo "plugin.json declares $expected"
+
+          codex plugin marketplace add . --json
+          codex plugin add helical-platform@helical-marketplace
+
+          # Assert on `installed`: a local marketplace reports `available: []`
+          # even on success, so an emptiness check there would pass vacuously.
+          codex plugin list --json | tee /dev/stderr | jq -e \
+            --arg v "$expected" \
+            '.installed | map(select(.name == "helical-platform" and .version == $v)) | length == 1' \
+            > /dev/null
