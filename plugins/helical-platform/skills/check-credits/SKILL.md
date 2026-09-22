@@ -1,26 +1,93 @@
 ---
 name: check-credits
 description: >-
-  Answer questions about Helical credits — balance, spending, buying more — and explain a
-  run refused for insufficient credit. Use when the user asks what their balance is, what
-  they have spent, how to top up, or why a run would not start.
+  Read the user's Helical credit balance, tell them what a run will cost and when they are
+  actually charged, and explain a run refused for insufficient credit. Use when the user
+  asks what their balance is, whether they can afford a run, what an embedding or
+  fine-tune will cost, how to top up, or why a run would not start.
 ---
 
-# Check credits and top up
+# Credits: read the balance, explain the charge
 
-**You cannot read the balance.** Nothing on this surface returns a credit figure, so the
-answer to "how many credits do I have?" is never a number you supply.
+## The balance is readable
 
-Send the user to **console.helical.bio** — the site they signed in to when they connected
-this plugin. Credits, spending, receipts and account settings all live there, and
-`console.helical.bio/docs` covers anything else they ask about the product.
+`whoami()` returns the signed-in `email`, the current `credits_balance`, and the `console`
+URL. When the user asks how many credits they have, that number is the answer — give it.
+
+**One credit is one USD**, so a credit figure is a dollar figure and there is nothing to
+convert.
+
+The figure is current as of the call, and it moves as runs are charged and refunded. Read
+it again rather than reusing one from earlier in the conversation.
+
+## What a run costs
+
+Billing is **per processed cell**, not per token:
+
+```
+credits = cells × passes × credits_per_cell
+```
+
+- `passes` is **1 for an embedding** and **the epoch count for fine-tuning** — which is why
+  fine-tuning the same dataset costs several times what embedding it does.
+- `credits_per_cell` is on every `listModels` entry. Rates differ per model.
+- A fine-tuned model is charged at the rate of the `base_model` it descends from; it has no
+  rate of its own and could not have one, since the user creates it at run time.
+- There is no deduplication — the same cell twice is two processed cells.
+
+Use this when the user is deciding **whether** to run: `cellCount` from `listDatasets` or
+`getDataset`, times the rate. For example 300,000 cells with `scgpt` at 1.8e-5 →
+`300000 × 1 × 0.000018` = **5.4 credits**.
+
+**But your arithmetic is an estimate, not the quote.** When a run is actually queued,
+`triggerEmbedding` prices it and returns the platform's own figure which is what the charge will 
+read. Queuing is free and starts nothing, so prefer that figure once it exists, and relay it rather
+than recomputing.
+
+## When the charge actually happens
+
+This is usually the user's real question, and it is reassuring:
+
+- Queuing a run charges nothing.
+- The credit is taken **when the run starts**, at approval.
+- A run that **fails or is cancelled is refunded in full**.
+
+So a failed run costs nothing. Say so plainly when one fails — it is the first thing they
+will want to know.
+
+## When the balance will not cover it
+
+A **402 `insufficient_balance`** can come back either when the run is queued or when it is
+approved. Either way nothing launched and nothing was charged — but **the confirmation is spent**.
+Topping up does not make it approvable again; the run has to be re-requested from the trigger tool,
+which mints a fresh quote.
+
+The 402 message names the shortfall and carries a buy-credits link. Relay that link as it stands: 
+it came from the platform and is correct for this account.
+
+Retrying the same request unchanged will not help, and the error says so. Do not loop.
+
+## Topping up
+
+Credits live on the console, the site the user signed in to when they connected this plugin. Use 
+`console` URL `whoami` returned, or a link an error carried.
+
+Console **Credits** page has tabs for **buying credits, usage, and receipts**, which covers
+topping up and "where did my credits go". Account settings and docs live there too.
 
 It is **not** `helical.bio`. That is the marketing site and holds nothing about their
-account; sending them there is the same wrong turn as inventing a menu. Beyond those two
-addresses, describe the destination rather than guessing a deeper URL — a full link is
-safe to pass on only when the platform itself gave it to you.
+account, so sending them there is the same wrong turn as inventing a menu. Beyond the pages
+named above, describe the destination rather than guessing a deeper URL.
 
 Do not describe a profile menu, an avatar dropdown, or a workspace billing screen. That is
 a different Helical product, and inventing navigation sends a paying customer looking for
 something that does not exist.
 
+
+## Conventions
+
+Read the balance with `whoami`, never guess it · one credit is one USD · re-read rather
+than reuse · per processed cell, no deduplication · your arithmetic estimates, the trigger
+quotes — prefer the quote · charged at start, refunded in full on failure or cancellation ·
+a 402 spends the confirmation, so re-request the run after topping up · the console URL the
+platform gave you, never `helical.bio`, never an invented menu.
