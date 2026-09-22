@@ -548,7 +548,15 @@ This is also where the reference prompts that §12.2 dismissed become directly a
 ```
 
 
-### 8.2 Workflow skills
+### 8.2 Licence and publication status
+
+Publisher, support and repository metadata in `plugin.json` are set, and the repository is **AGPL-3.0-or-later**, declared as `license: "AGPL-3.0-or-later"` — the same copyleft the open-source `helical` package carries, whose LICENCE this one is copied from. Two items remain open before distribution, each a decision rather than an edit: the **privacy policy and terms URLs** (absent rather than guessed at), and whether **`capabilities: ["Read"]`** is honest for a plugin that starts billable runs.
+
+AGPL-3.0-or-later is a deliberate choice, not a default: it is the licence the open-source `helical` package already carries, and the plugin's whole purpose is to drive that package and the platform built on it. A permissive licence here beside a copyleft package there would be the odd combination.
+
+Two consequences to be aware of rather than surprised by. **The end-user grant question disappears** — AGPL grants every recipient the right to run, study, modify and share the plugin, so nothing further is needed before distribution. And **§13, the network clause, now applies to the plugin itself**: anyone who modifies it and lets others interact with it over a network must offer them the modified source. For us that bites only if we host a modified plugin, which the current design does not — the plugin runs on the user's machine and the hosted surface is the dashboard, which is separate code.
+
+### 8.3 Workflow skills
 
 Three skills. Two drive the hosted tool surface; the third drives the user's own machine (§7.2). All follow the conventions of the existing `platform-skills` repository — a thin orchestration layer that says which tools to call, in what order, and how to decide what comes next, without reimplementing the platform — adapted for the three things specific to this product: money, the absence of a project concept, and the fact that nothing downstream will ask the user to confirm anything.
 
@@ -570,7 +578,7 @@ The third skill has no MCP dependency at all, which is the clearest statement of
 
 The first two declare their MCP dependency on the `helical` server in `agents/openai.yaml`; the third deliberately declares none.
 
-### 8.3 Transport
+### 8.4 Transport
 
 `https://api.helical.bio/mcp` is served by the `helical-mcp` service, deployed to the btoc
 tenant (`enable_helical_mcp = true`, `helical_mcp_public_url` in
@@ -667,7 +675,7 @@ The Cognito client is provisioned by `infra/modules/tenant/user_pool_client_mcp.
 7. **Dashboard, services**: move membership re-checks into each service being ported; replace `conversationId` scoping with subject-derived project resolution for the ported routes.
 8. **Billing**: add the price table (per-model coefficients derived from measured GPU-hours), token ledger (paid + free-grant credit classes, consumption ordering, expiry), row-locked balance check, and estimator service; compute tokens deterministically from dataset shape and the model coefficient — no dags-repo change is required — then debit at launch and refund terminal failures through idempotent ledger writes; add `get_balance` / `get_usage`.
 9. **MCP endpoint** (in the dashboard): a Streamable HTTP route speaking `initialize` / `tools/list` / `tools/call`, with descriptors generated from the same Zod schemas as the REST routes rather than written twice; RFC 9728 metadata and the OAuth challenge are served by the proxy in front of it (§4.3), not here; **stateless** — issue no `Mcp-Session-Id`, since the dashboard runs multiple replicas with no session affinity.
-10. **Plugin artifacts**: point `.mcp.json` at the dashboard's MCP endpoint for production; settle the legal URLs, the declared capabilities, and the end-user grant the proprietary licence does not yet give (§8.2).
+10. **Plugin artifacts**: point `.mcp.json` at the dashboard's MCP endpoint for production; settle the legal URLs and the declared capabilities (§8.2). The licence is settled: AGPL-3.0-or-later, so no end-user grant is outstanding.
 11. **Payments**: select the processor (Stripe is the seed, §5.3) and integrate it behind the provider interface — top-up sessions bound to the authenticated subject, signature- and freshness-verified idempotent webhooks, and the Helical-owned top-up page. The selection gates the integration but not the ledger, which is processor-agnostic by construction.
 12. **Implement the compute decision from Gate 0** (§5.4): under Variant A, fix the spot-versus-on-demand posture and its retry policy, pin the image the token coefficients were measured against, and decide whether Nebius stays as the overflow route; under Variant B, build the dispatch, per-run scoped credentials, and artifact registration that replace the DAG's. The *decision* belongs at Gate 0; only the implementation belongs here.
 13. **Launch readiness**: stand up the customer-facing support channel and publish the retention/deletion policy (§9) — both are distribution blockers with no owner today.
