@@ -22,22 +22,28 @@ it again rather than reusing one from earlier in the conversation.
 
 ## What a run costs
 
-Billing is **per processed cell**, not per token:
+A run costs **a fixed amount per job plus a rate per processed cell**, not per token:
 
 ```
-credits = cells × passes × credits_per_cell
+credits = credits_per_job + cells × passes × credits_per_cell
 ```
 
+- `credits_per_job` pays for the work a job does before its first cell, so it is the same
+  for ten cells or a million. On a small dataset it is most of the cost.
 - `passes` is **1 for an embedding** and **the epoch count for fine-tuning** — which is why
-  fine-tuning the same dataset costs several times what embedding it does.
-- `credits_per_cell` is on every `listModels` entry. Rates differ per model.
-- A fine-tuned model is charged at the rate of the `base_model` it descends from; it has no
-  rate of its own and could not have one, since the user creates it at run time.
+  fine-tuning the same dataset costs several times what embedding it does. The per-job
+  amount is paid once, not once per epoch.
+- Both rates are on every `listModels` entry, and differ per model. A model whose rates are
+  `null` is not priced and cannot be run here; it is not free.
+- A fine-tuned model is charged at the rates of the `base_model` it descends from; it has no
+  rates of its own and could not have them, since the user creates it at run time.
 - There is no deduplication — the same cell twice is two processed cells.
 
 Use this when the user is deciding **whether** to run: `cellCount` from `listDatasets` or
-`getDataset`, times the rate. For example 300,000 cells with `scgpt` at 1.8e-5 →
-`300000 × 1 × 0.000018` = **5.4 credits**.
+`getDataset`, and the two rates from `listModels`. For example, with a model at
+`credits_per_job` 0.03 and `credits_per_cell` 0.000003, embedding 300,000 cells is
+`0.03 + 300000 × 1 × 0.000003` = **0.93 credits**. Read the real rates from `listModels`
+rather than reusing these.
 
 **But your arithmetic is an estimate, not the quote.** When a run is actually queued,
 `triggerEmbedding` prices it and returns the platform's own figure which is what the charge will 
@@ -87,7 +93,7 @@ something that does not exist.
 ## Conventions
 
 Read the balance with `whoami`, never guess it · one credit is one USD · re-read rather
-than reuse · per processed cell, no deduplication · your arithmetic estimates, the trigger
+than reuse · a fixed amount per job plus a rate per processed cell, no deduplication · your arithmetic estimates, the trigger
 quotes — prefer the quote · charged at start, refunded in full on failure or cancellation ·
 a 402 spends the confirmation, so re-request the run after topping up · the console URL the
 platform gave you, never `helical.bio`, never an invented menu.
