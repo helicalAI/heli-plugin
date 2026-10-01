@@ -13,9 +13,12 @@ The consolidated architecture, identity, metering, security, and artifact bluepr
 .agents/plugins/marketplace.json  # Codex marketplace
 .claude-plugin/marketplace.json   # Claude Code marketplace
 plugins/helical-platform/
-├── .codex-plugin/plugin.json   # Codex plugin manifest
-├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep them in sync)
-├── .mcp.json                   # the remote MCP endpoint the plugin connects to (shared)
+├── plugin.json                 # portable Agent Plugins manifest; OpenAI listing under extensions.com.openai
+├── mcp.json                    # portable MCP config (OpenAI reads this one, not .mcp.json)
+├── .codex-plugin/plugin.json   # Codex fallback for clients without the portable format
+├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep all three in sync)
+├── .mcp.json                   # the remote MCP endpoint, as Claude Code and the Codex fallback read it
+├── assets/icon.png             # listing icon for both directories
 ├── skills/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
 │   ├── fine-tune-model/        # hosted: labelled dataset → trained, registered model
@@ -184,5 +187,5 @@ Skills are namespaced by plugin: `/helical-platform:compute-embeddings` and so o
 with `claude plugin validate --strict .` and `claude plugin validate --strict
 plugins/helical-platform`, which CI also runs.
 
-When you release, bump `version` in **both** `plugin.json` files: Claude Code only offers
+When you release, bump `version` in **all three** `plugin.json` files: Claude Code only offers
 users an update when the version changes.

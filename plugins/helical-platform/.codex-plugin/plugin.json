@@ -1,7 +1,7 @@
 {
   "name": "helical-platform",
   "version": "0.2.0",
-  "description": "Compute embeddings and fine-tune Helical foundation models \u2014 hosted and billed per token, or locally on your own GPU with the open-source package.",
+  "description": "Compute embeddings and fine-tune Helical foundation models — hosted and billed per token, or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
     "email": "support@helical-ai.com",
@@ -22,20 +22,26 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Helical Platform",
-    "shortDescription": "Embed and fine-tune with Helical models",
-    "longDescription": "Upload single-cell datasets, pick a Helical foundation model, see the per-token cost before you commit, compute embeddings or fine-tune on your own labels, and download the results \u2014 or run the same models locally on your own GPU with the open-source helical package, at no cost and without your data leaving your machine.",
+    "shortDescription": "Single-cell foundation models",
+    "longDescription": "Helical lets you run biological foundation models on your own single-cell data, from the chat you're already in.\n\nUpload an .h5ad dataset into your private Helical project, pick a model — scGPT, Geneformer, TranscriptFormer, Cell2Sentence or Nicheformer — and compute embeddings on Helical's GPUs. Follow the run while it goes, read the error if it fails, and download the embeddings when it finishes.\n\nNothing starts on its own. A run is priced and queued first, and only begins once you approve it in a second, separate step. Every tool works inside the one project your account owns.\n\nCompute is pay-as-you-go. Each model has a published per-cell rate, runs are billed per processed cell, and you top up a prepaid credit balance on helical.bio — no subscription.",
     "developerName": "Helical",
-    "category": "Productivity",
+    "category": "Scientific Research",
     "capabilities": [
-      "Read"
+      "Upload datasets",
+      "Compute embeddings",
+      "Fine-tune models",
+      "Download results"
     ],
-    "websiteURL": "https://helical.bio",
+    "websiteURL": "https://console.helical.bio",
+    "supportURL": "https://console.helical.bio/contact",
+    "privacyPolicyURL": "https://console.helical.bio/privacy-policy",
+    "termsOfServiceURL": "https://console.helical.bio/terms-of-service",
     "defaultPrompt": [
       "Embed my dataset with a Helical model.",
       "Fine-tune a model on my labelled dataset.",
-      "Run a Helical model locally on my own GPU.",
-      "Check my Helical credits and top up.",
-      "Reconnect my Helical sign-in."
-    ]
+      "Run a Helical model locally on my own GPU."
+    ],
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
   }
 }
