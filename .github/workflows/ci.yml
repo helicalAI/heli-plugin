@@ -32,3 +32,26 @@ jobs:
             --arg v "$expected" \
             '.installed | map(select(.name == "helical-platform" and .version == $v)) | length == 1' \
             > /dev/null
+
+      - run: npm i -g @anthropic-ai/claude-code@2.1.281     # pin, same reason as codex
+
+      - name: Validate and round-trip the marketplace and plugin through the Claude Code loader
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+
+          # --strict fails on unrecognized fields and missing metadata, which the
+          # loader itself tolerates silently.
+          claude plugin validate --strict .
+          claude plugin validate --strict plugins/helical-platform
+
+          expected=$(jq -re .version plugins/helical-platform/.claude-plugin/plugin.json)
+          echo "plugin.json declares $expected"
+
+          claude plugin marketplace add ./   # a bare `.` is rejected as a source
+          claude plugin install helical-platform@helical-marketplace
+
+          claude plugin list --json | tee /dev/stderr | jq -e \
+            --arg v "$expected" \
+            'map(select(.id == "helical-platform@helical-marketplace" and .version == $v)) | length == 1' \
+            > /dev/null

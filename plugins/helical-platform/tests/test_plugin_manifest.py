@@ -22,11 +22,19 @@ from urllib.parse import urlparse
 PLUGIN = Path(__file__).parents[1]
 REPO = PLUGIN.parents[1]
 MANIFEST_PATH = PLUGIN / ".codex-plugin" / "plugin.json"
+CLAUDE_MANIFEST_PATH = PLUGIN / ".claude-plugin" / "plugin.json"
+CODEX_MARKETPLACE_PATH = REPO / ".agents" / "plugins" / "marketplace.json"
+CLAUDE_MARKETPLACE_PATH = REPO / ".claude-plugin" / "marketplace.json"
 MCP_JSON_PATH = PLUGIN / ".mcp.json"
 SKILLS_DIR = PLUGIN / "skills"
 
 MANIFEST_TEXT = MANIFEST_PATH.read_text()
 MANIFEST = json.loads(MANIFEST_TEXT)
+CLAUDE_MANIFEST_TEXT = CLAUDE_MANIFEST_PATH.read_text()
+CLAUDE_MANIFEST = json.loads(CLAUDE_MANIFEST_TEXT)
+CODEX_MARKETPLACE = json.loads(CODEX_MARKETPLACE_PATH.read_text())
+CLAUDE_MARKETPLACE_TEXT = CLAUDE_MARKETPLACE_PATH.read_text()
+CLAUDE_MARKETPLACE = json.loads(CLAUDE_MARKETPLACE_TEXT)
 MCP_JSON = json.loads(MCP_JSON_PATH.read_text())
 SKILL_DIRS = sorted(p for p in SKILLS_DIR.iterdir() if p.is_dir())
 
@@ -93,11 +101,20 @@ class ManifestMetadataTests(unittest.TestCase):
         """Scans the whole manifest, not just whole quoted values: a docs or
         marketing link inside `longDescription` or `defaultPrompt` is exactly
         where a typo'd domain someone else could register would hide."""
-        urls = re.findall(r"https?://[^\s\"'<>)\\]+", MANIFEST_TEXT)
+        shipped = {
+            MANIFEST_PATH: MANIFEST_TEXT,
+            CLAUDE_MANIFEST_PATH: CLAUDE_MANIFEST_TEXT,
+            CLAUDE_MARKETPLACE_PATH: CLAUDE_MARKETPLACE_TEXT,
+        }
+        urls = [
+            (path, url)
+            for path, text in shipped.items()
+            for url in re.findall(r"https?://[^\s\"'<>)\\]+", text)
+        ]
         self.assertGreater(len(urls), 0, "no URLs found — the scan is broken, not the manifest")
-        for url in urls:
+        for path, url in urls:
             host = urlparse(url).netloc.lower()
-            with self.subTest(url=url):
+            with self.subTest(file=path.relative_to(REPO), url=url):
                 self.assertIn(host, ALLOWED_HOSTS)
                 if host == "github.com":
                     self.assertTrue(
@@ -290,6 +307,49 @@ class ToolWiringTests(unittest.TestCase):
             set(),
             "the auth skill invents a Helical host no other skill knows about",
         )
+
+
+class ClientParityTests(unittest.TestCase):
+    """Codex and Claude Code each read their own manifest and marketplace, and share
+    the skills and `.mcp.json`. The duplicated metadata is what drifts: bump one
+    version and not the other, and the two clients install different releases
+    under the same number."""
+
+    SHARED_FIELDS = (
+        "name", "version", "description", "author",
+        "homepage", "repository", "license", "keywords",
+    )
+
+    def test_the_two_manifests_agree_on_shared_metadata(self):
+        for field in self.SHARED_FIELDS:
+            with self.subTest(field=field):
+                self.assertEqual(CLAUDE_MANIFEST.get(field), MANIFEST.get(field))
+
+    def test_the_claude_manifest_relies_on_default_discovery(self):
+        """Claude Code finds `skills/` and `.mcp.json` at the plugin root on its own.
+        Naming them again would *replace* the `.mcp.json` default rather than add
+        to it, so a second pointer is one more thing to keep in sync for nothing."""
+        for field in ("skills", "mcpServers"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, CLAUDE_MANIFEST)
+
+    def test_the_two_marketplaces_ship_the_same_plugin_from_the_same_path(self):
+        self.assertEqual(CLAUDE_MARKETPLACE["name"], CODEX_MARKETPLACE["name"])
+        codex = {p["name"]: p["source"]["path"] for p in CODEX_MARKETPLACE["plugins"]}
+        claude = {p["name"]: p["source"] for p in CLAUDE_MARKETPLACE["plugins"]}
+        self.assertEqual(claude, codex)
+        self.assertEqual((REPO / claude[MANIFEST["name"]]).resolve(), PLUGIN.resolve())
+
+    def test_the_auth_skill_names_the_server_as_claude_code_registers_it(self):
+        """A plugin-provided server is registered as `plugin:<plugin>:<server>`, and
+        `claude mcp login <server>` answers "No MCP server named ..." for it. Renaming
+        the plugin or the server leaves the reconnect command pointing at nothing."""
+        text = (SKILLS_DIR / AUTH_SKILL / "SKILL.md").read_text()
+        for server in MCP_JSON["mcpServers"]:
+            with self.subTest(server=server):
+                self.assertIn(
+                    f"claude mcp login plugin:{CLAUDE_MANIFEST['name']}:{server}", text
+                )
 
 
 if __name__ == "__main__":

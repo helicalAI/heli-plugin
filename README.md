@@ -10,9 +10,12 @@ The consolidated architecture, identity, metering, security, and artifact bluepr
 ## Layout
 
 ```text
+.agents/plugins/marketplace.json  # Codex marketplace
+.claude-plugin/marketplace.json   # Claude Code marketplace
 plugins/helical-platform/
-├── .codex-plugin/plugin.json   # plugin manifest
-├── .mcp.json                   # the remote MCP endpoint the plugin connects to
+├── .codex-plugin/plugin.json   # Codex plugin manifest
+├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep them in sync)
+├── .mcp.json                   # the remote MCP endpoint the plugin connects to (shared)
 ├── skills/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
 │   ├── fine-tune-model/        # hosted: labelled dataset → trained, registered model
@@ -159,5 +162,27 @@ Publisher, support, repository and licence metadata are real — the repo is **A
 
 ```sh
 codex plugin marketplace add . # will install ./.agents/plugins/marketplace.json
-codex plugin add helical-platform@local-examples
+codex plugin add helical-platform@helical-marketplace
 ```
+
+## Installing it in Claude Code
+
+From GitHub:
+
+```sh
+claude plugin marketplace add helicalAI/heli-plugin   # reads .claude-plugin/marketplace.json
+claude plugin install helical-platform@helical-marketplace
+```
+
+From a local checkout, `claude plugin marketplace add ./` instead (a bare `.` is rejected).
+The same commands work inside a session as `/plugin marketplace add …` and
+`/plugin install …`. Then run `/mcp` to sign in. Claude Code registers the server as
+`plugin:helical-platform:helical`, so from the shell it is
+`claude mcp login plugin:helical-platform:helical`.
+
+Skills are namespaced by plugin: `/helical-platform:compute-embeddings` and so on. Validate
+with `claude plugin validate --strict .` and `claude plugin validate --strict
+plugins/helical-platform`, which CI also runs.
+
+When you release, bump `version` in **both** `plugin.json` files: Claude Code only offers
+users an update when the version changes.
