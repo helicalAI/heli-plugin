@@ -13,7 +13,7 @@ Turns a catalogue dataset plus a foundation model into an embedding matrix and a
 
 **The one thing to understand before starting:** `start_embedding_run` consumes real
 compute and starts immediately. Nothing downstream will ask the user to confirm — there is
-no approval screen, because a B2C user never opens the platform UI. **You are the
+no approval screen for the user to click through. **You are the
 confirmation step.** State the dataset, the model, and what the run will do, and get an
 explicit yes before calling it.
 
@@ -32,7 +32,7 @@ reporting, because run time scales with them.
 
 There is **no upload tool**: datasets must already exist in the catalogue. If the user has
 their own `.h5ad`, say plainly that this surface cannot ingest it and that they need to
-add it through the dashboard.
+add it through the Helical console.
 
 ## 2. Choose a model
 
@@ -91,7 +91,7 @@ and `s3_key`.
   confirmed to exist; use `list_files` for walking a run's output directory.
 - `read_file({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
   matrix is a binary `.npy` — it cannot be read through this tool. Report its path and let
-  the user fetch it from the dashboard; do not pretend to have inspected it.
+  the user fetch it from the Helical console; do not pretend to have inspected it.
 - For the UMAP, `list_umaps({ datasetId })` then `get_umap({ runId })` returns parsed
   coordinates and labels. The payload can be very large: summarise it, do not echo it.
 

@@ -7,7 +7,7 @@ dependencies:
   tools:
     - type: "mcp"
       value: "helical"
-      description: "Helical dashboard agentcore-mcp API: datasets, models, run triggers, and outputs"
+      description: "Helical platform API: datasets, models, run triggers, and outputs"
 
 policy:
   allow_implicit_invocation: true
