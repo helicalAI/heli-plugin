@@ -59,6 +59,7 @@ ALLOWED_HOSTS = {
     "helical.readthedocs.io",
     "github.com",  # path-restricted below
     "datasets.cellxgene.cziscience.com",  # the public file the review cases ingest
+    "drive.google.com",  # the review walkthrough video
 }
 
 
@@ -224,6 +225,11 @@ class OpenAIListingTests(unittest.TestCase):
                         self.assertTrue(case.get(field, "").strip(), f"{field} is missing")
         prompts = [c["prompt"] for kind in ("positive", "negative") for c in cases[kind]]
         self.assertEqual(len(set(prompts)), len(prompts))
+
+    def test_review_has_a_demo_recording(self):
+        """MCP review refuses a submission without a reviewer-accessible walkthrough."""
+        url = MANIFEST["extensions"]["com.openai"]["review"]["demo_recording_url"]
+        self.assertEqual(urlparse(url).scheme, "https")
 
     def test_no_reviewer_secrets_in_the_package(self):
         """ZIP import rejects these; reviewer access goes through the dashboard form."""
