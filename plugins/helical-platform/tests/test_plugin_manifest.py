@@ -58,6 +58,7 @@ ALLOWED_HOSTS = {
     "docs.helical-ai.bio",
     "helical.readthedocs.io",
     "github.com",  # path-restricted below
+    "datasets.cellxgene.cziscience.com",  # the public file the review cases ingest
 }
 
 
@@ -204,6 +205,32 @@ class OpenAIListingTests(unittest.TestCase):
         for field in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
             with self.subTest(field=field):
                 self.assertEqual(urlparse(OPENAI_INTERFACE[field]).scheme, "https")
+
+    def test_review_cases_are_complete_for_mcp_review(self):
+        """Initial MCP review takes exactly five positive and three negative cases,
+        and a positive case without its tools and expected result cannot be checked.
+        Upload accepts partial lists, so only submission would catch this."""
+        cases = MANIFEST["extensions"]["com.openai"]["review"]["test_cases"]
+        self.assertEqual(len(cases["positive"]), 5)
+        self.assertEqual(len(cases["negative"]), 3)
+        self.assertEqual(len(MCP_JSON["mcpServers"]), 1, "plugin-level cases need exactly one server")
+        for kind, required in (
+            ("positive", ("description", "prompt", "tools_triggered", "expected_behavior")),
+            ("negative", ("description", "prompt")),
+        ):
+            for case in cases[kind]:
+                with self.subTest(kind=kind, case=case.get("description")):
+                    for field in required:
+                        self.assertTrue(case.get(field, "").strip(), f"{field} is missing")
+        prompts = [c["prompt"] for kind in ("positive", "negative") for c in cases[kind]]
+        self.assertEqual(len(set(prompts)), len(prompts))
+
+    def test_no_reviewer_secrets_in_the_package(self):
+        """ZIP import rejects these; reviewer access goes through the dashboard form."""
+        review = MANIFEST["extensions"]["com.openai"]["review"]
+        for field in ("test_credentials", "reviewer_instructions"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, review)
 
     def test_icons_resolve_to_square_pngs_inside_the_plugin(self):
         """Both directories take the icon from a file in the plugin. OpenAI accepts

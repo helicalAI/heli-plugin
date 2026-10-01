@@ -44,6 +44,56 @@
         ],
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/icon.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Health check: confirms the server is reachable and the session is authenticated.",
+              "prompt": "Check that my Helical connection works and tell me which account I'm signed in as.",
+              "tools_triggered": "helical___health, helical___whoami",
+              "expected_behavior": "Calls health to confirm the server responds, then whoami to confirm the session is authenticated, and reports the signed-in account. Nothing is queued and no credits are spent."
+            },
+            {
+              "description": "Dataset ingestion: CELLxGENE URL to download, the three-step staged upload, and a registered catalogue row.",
+              "prompt": "Import this CELLxGENE dataset into my Helical project and register it: https://datasets.cellxgene.cziscience.com/dca77ed0-1f2f-474e-bec7-2f885968c73a.h5ad",
+              "tools_triggered": "helical___initiateDatasetUpload, helical___completeDatasetUpload, helical___registerDataset",
+              "expected_behavior": "Downloads the .h5ad (Bakken 2021, human M1 non-neurons, 1,705 cells), opens a multipart upload with initiateDatasetUpload, uploads every part to the presigned URLs it returns, assembles them with completeDatasetUpload, and registers the file with registerDataset. The dataset then appears in the user's catalogue with its own id."
+            },
+            {
+              "description": "scGPT embedding: quote, explicit approval, GPU run, and artifact download.",
+              "prompt": "Compute scGPT embeddings for the Bakken 2021 human M1 non-neurons dataset I just imported, and download the result.",
+              "tools_triggered": "helical___listDatasets, helical___listModels, helical___triggerEmbedding, helical___resolveConfirmation, helical___getRunDetails, helical___downloadArtifact",
+              "expected_behavior": "Finds the dataset and the scGPT base model, queues the run with triggerEmbedding, and shows the platform's quote (more than 0 credits) before asking for approval. Calls resolveConfirmation with decision 'approve' only after the user agrees, follows the run with getRunDetails until it succeeds, and downloads the embeddings with downloadArtifact: a float32 matrix with one 512-dimensional row per cell (1,705 x 512)."
+            },
+            {
+              "description": "Dataset discovery: listDatasets filters, then the getDataset detail for one dataset.",
+              "prompt": "Which human datasets do I have in Helical? Show me the details of the Bakken 2021 one.",
+              "tools_triggered": "helical___listDatasets, helical___getDataset",
+              "expected_behavior": "Calls listDatasets filtered by organism (\"Homo sapiens\") and lists the matching datasets, then calls getDataset on the Bakken 2021 dataset and reports its cell count (1,705) and gene count. Nothing is queued and no credits are spent."
+            },
+            {
+              "description": "Cost quote without spending: a real quote that the user then declines, so nothing launches.",
+              "prompt": "How much would it cost to embed the Bakken 2021 dataset with Geneformer? Just tell me the price, don't run it.",
+              "tools_triggered": "helical___triggerEmbedding, helical___resolveConfirmation",
+              "expected_behavior": "Queues the run with triggerEmbedding, which prices it without starting it, and reports the platform's quote (more than 0 credits). Because the user declined, it calls resolveConfirmation with decision 'reject'. No run is launched and the credit balance is unchanged."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Searching for public datasets that are not in the user's project.",
+              "prompt": "Search CELLxGENE for public human lung fibrosis datasets I don't have yet."
+            },
+            {
+              "description": "Billing actions: invoices, payment methods and refunds.",
+              "prompt": "Send me last month's Helical invoice and change the card I pay with."
+            },
+            {
+              "description": "Deleting or renaming a registered dataset.",
+              "prompt": "Delete my Bakken 2021 dataset from Helical, or rename it to old-m1 if you can't delete it."
+            }
+          ]
+        }
       }
     }
   }
