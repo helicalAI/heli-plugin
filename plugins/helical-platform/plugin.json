@@ -39,8 +39,7 @@
         "termsOfServiceURL": "https://console.helical.bio/terms-of-service",
         "defaultPrompt": [
           "Embed my dataset with a Helical model.",
-          "Fine-tune a model on my labelled dataset.",
-          "Run a Helical model locally on my own GPU."
+          "Fine-tune a model on my labelled dataset."
         ],
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/icon.png"
