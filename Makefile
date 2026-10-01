@@ -1,4 +1,4 @@
-.PHONY: check test lint round-trip-codex round-trip-claude
+.PHONY: check test lint round-trip-codex round-trip-claude package release-plan
 
 # Where the round-trip installs put their Codex and Claude Code config homes, so they
 # never touch ~/.codex or ~/.claude. Created if missing; with no value, `check` makes a
@@ -21,6 +21,7 @@ check:
 # Standard library only, so any interpreter works; uv picks one without a project env.
 test:
 	uv run python -m unittest discover -s plugins/helical-platform/tests -v
+	uv run python -m unittest discover -s tests -v
 
 # --strict fails on unrecognized fields and missing metadata, which the loader itself
 # tolerates silently.
@@ -56,3 +57,15 @@ round-trip-claude:
 		'map(select(.id == "helical-platform@helical-marketplace" and .version == $$v)) | length == 1' \
 		> /dev/null; \
 	echo "Claude Code installed helical-platform $$expected"
+
+# OpenAI submission zips: dist/<name>-<version>.zip per plugin, built from the
+# committed HEAD, not the working tree, and checked against OpenAI's ZIP rules.
+# See DEVELOPING.md.
+package:
+	uv run python scripts/release.py package
+
+# Which plugins a merge to main releases, written to dist/release-plan. Fails when a
+# plugin changed since its <name>-v<version> tag without a version bump. Tags come
+# from origin, so a stale clone cannot pass what CI would fail.
+release-plan:
+	uv run python scripts/release.py release-plan --fetch

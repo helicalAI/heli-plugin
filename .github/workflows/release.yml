@@ -1,0 +1,135 @@
+name: release
+
+# A merge to main is a release: CI runs, then every plugin with a new version gets a
+# <name>-v<version> tag and a GitHub Release with its OpenAI submission zip.
+# See DEVELOPING.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # On PRs ci.yml already runs by itself. Not named `ci`: skipped on PRs, a job of
+  # that name would report success under the same check name as ci.yml's real one.
+  checks:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  # Fails the develop -> main PR when a plugin changed without a version bump,
+  # before the merge ships it to the Anthropic Directory.
+  version-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.plan.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0     # tags and history, for the diff against the last tag
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - run: make release-plan
+
+      # The plan as [{"name": ..., "version": ...}], one per plugin to release.
+      - id: plan
+        run: |
+          plugins=$(jq -Rnc '[inputs | split(" ") | {name: .[0], version: .[1]}]' dist/release-plan)
+          echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
+
+  # Puts each zip this PR would release on the PR, so the reviewer can upload it to
+  # OpenAI and see it accepted before merging. The release after the merge attaches
+  # the same bytes. See DEVELOPING.md.
+  stage:
+    needs: version-check
+    if: needs.version-check.outputs.plugins != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # the upload comment
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.version-check.outputs.plugins) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0     # the plugin's history, for the zip timestamps
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - run: make package
+
+      # archive: false keeps the download the plugin zip itself, not a zip in a zip.
+      - id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: dist/${{ matrix.plugin.name }}-${{ matrix.plugin.version }}.zip
+          archive: false
+
+      # One comment per plugin, found again by its marker and edited on every push.
+      - name: Comment the zip on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          NAME: ${{ matrix.plugin.name }}
+          VERSION: ${{ matrix.plugin.version }}
+          URL: ${{ steps.upload.outputs.artifact-url }}
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          marker="<!-- openai-upload:$NAME -->"
+          body="$marker
+          ### OpenAI upload: $NAME $VERSION
+
+          Before merging, upload this zip to OpenAI and check that it is accepted.
+
+          1. Download [$NAME-$VERSION.zip]($URL) (SHA-256 \`$DIGEST\`).
+          2. In the OpenAI Developer Platform, upload it as the new package for $NAME.
+          3. Merge only once OpenAI's upload checks pass. If they reject it, fix the
+             plugin on \`develop\` and push: this comment is updated with the new zip.
+
+          The release created on merge attaches this same zip."
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh pr comment "$PR" --body "$body"
+          fi
+
+  release:
+    if: github.event_name == 'push'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create tags and releases; nothing else gets this
+    # Two quick merges must not race for the same tag.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # Again after the merge: a tag created since the PR check must not be reused.
+      - run: make release-plan
+
+      - run: make package
+
+      # GitHub computes and shows a SHA-256 for each uploaded asset, so the zip is
+      # attached alone, without a checksum file.
+      - name: Create a release per plugin with a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while read -r name version; do
+            gh release create "$name-v$version" "dist/$name-$version.zip" \
+              --target "$GITHUB_SHA" --title "$name $version" --notes "" < /dev/null
+          done < dist/release-plan

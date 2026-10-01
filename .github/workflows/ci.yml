@@ -1,11 +1,13 @@
 name: ci
 
-# push is scoped to the long-lived branches: a feature branch with an open PR
-# fires both events otherwise, and every run is duplicated.
+# push is scoped to develop: a feature branch with an open PR fires both events
+# otherwise, and every run is duplicated. main runs this through release.yml
+# (workflow_call), so the release waits on it and it runs once per push.
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
   pull_request:
+  workflow_call:
 
 jobs:
   ci:

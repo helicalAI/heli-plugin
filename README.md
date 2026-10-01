@@ -25,10 +25,11 @@ and so on.
 From GitHub:
 
 ```sh
-claude plugin marketplace add helicalAI/heli-plugin   # reads .claude-plugin/marketplace.json
+claude plugin marketplace add helicalAI/heli-plugin#main   # reads .claude-plugin/marketplace.json
 claude plugin install helical-platform@helical-marketplace
 ```
 
+`#main` pins the released branch; the default branch, `develop`, holds unreleased work.
 From a local checkout, use `claude plugin marketplace add ./` instead (a bare `.` is
 rejected). The same commands work inside a session as `/plugin marketplace add …` and
 `/plugin install …`.
@@ -38,6 +39,15 @@ Then run `/mcp` to sign in. Claude Code registers the server as
 `claude mcp login plugin:helical-platform:helical`.
 
 ## Installing it in Codex CLI
+
+From GitHub, pinned to the released branch:
+
+```sh
+codex plugin marketplace add helicalAI/heli-plugin --ref main
+codex plugin add helical-platform@helical-marketplace
+```
+
+From a local checkout:
 
 ```sh
 codex plugin marketplace add .   # reads ./.agents/plugins/marketplace.json
@@ -61,6 +71,8 @@ Your account, credits and usage history live at [console.helical.bio](https://co
 ```text
 .agents/plugins/marketplace.json  # Codex marketplace
 .claude-plugin/marketplace.json   # Claude Code marketplace
+scripts/release.py                # release zips and the version gate (see DEVELOPING.md)
+tests/test_release.py             # its tests
 plugins/helical-platform/
 ├── plugin.json                 # OpenAI / Codex manifest (Agent Plugins format; listing under extensions.com.openai)
 ├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep them in sync)
@@ -79,6 +91,7 @@ plugins/helical-platform/
 ```sh
 make check                         # unit tests, strict manifest validation, install through both loaders
 make check TMP_DIR=/tmp/heli       # keep the throwaway Codex / Claude Code config homes there
+make package                       # dist/<name>-<version>.zip per plugin, for OpenAI submission
 ```
 
 Needs `uv`, `jq`, `codex` and `claude` on the `PATH`. The installs go into a throwaway
@@ -86,8 +99,8 @@ config home, never your own `~/.codex` or `~/.claude`.
 
 CI runs `make check`.
 
-When you release, bump `version` in **both** `plugin.json` files: Claude Code only offers
-users an update when the version changes.
+Releases go through `main`. See [DEVELOPING.md](DEVELOPING.md) for the branch model, the
+version bump and the OpenAI upload.
 
 ## License
 
