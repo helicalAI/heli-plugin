@@ -19,5 +19,6 @@
     "bioinformatics",
     "foundation-models",
     "mcp"
-  ]
+  ],
+  "mcpServers": "./mcp.json"
 }

@@ -13,11 +13,9 @@ The consolidated architecture, identity, metering, security, and artifact bluepr
 .agents/plugins/marketplace.json  # Codex marketplace
 .claude-plugin/marketplace.json   # Claude Code marketplace
 plugins/helical-platform/
-├── plugin.json                 # portable Agent Plugins manifest; OpenAI listing under extensions.com.openai
-├── mcp.json                    # portable MCP config (OpenAI reads this one, not .mcp.json)
-├── .codex-plugin/plugin.json   # Codex fallback for clients without the portable format
-├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep all three in sync)
-├── .mcp.json                   # the remote MCP endpoint, as Claude Code and the Codex fallback read it
+├── plugin.json                 # OpenAI / Codex manifest (Agent Plugins format; listing under extensions.com.openai)
+├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep them in sync)
+├── mcp.json                    # the remote MCP endpoint the plugin connects to (shared)
 ├── assets/icon.png             # listing icon for both directories
 ├── skills/
 │   ├── compute-embeddings/     # hosted: dataset → model → estimate → run → outputs
@@ -119,7 +117,7 @@ arguments, a 2 MB response cap, a 30-second timeout, and errors surfaced as the 
 `error` string with its `detail` field dropped, since that can carry Zod issues or exception
 text.
 
-The endpoint in `.mcp.json` is served by the **`helical-mcp` service** (`api.helical.bio`,
+The endpoint in `mcp.json` is served by the **`helical-mcp` service** (`api.helical.bio`,
 `enable_helical_mcp = true` in `infra/envs/prod/btoc-tenant`). It is a FastMCP proxy: it
 terminates MCP over Streamable HTTP and forwards the caller's Cognito bearer to the
 per-tenant AgentCore Gateway, which is backed by the dashboard's tool routes. A native MCP
@@ -137,7 +135,7 @@ used in `infra`. An older proof of concept under the same name is superseded. Se
 
 ## Local development
 
-The plugin holds no credentials. `.mcp.json` names the remote endpoint, and the MCP client
+The plugin holds no credentials. `mcp.json` names the remote endpoint, and the MCP client
 logs in through the browser: `helical-mcp` presents the dynamic-registration surface Claude
 Code and Codex expect and proxies Authorization Code + PKCE to the Cognito hosted UI.
 
@@ -147,7 +145,7 @@ claude mcp add --transport http --scope user helical https://api.helical.bio/mcp
 /mcp        # browser opens the Cognito login
 ```
 
-To develop against a non-production deployment, point `.mcp.json` at that tenant's own
+To develop against a non-production deployment, point `mcp.json` at that tenant's own
 `helical-mcp` URL. Do not commit the change.
 
 ## Validate
@@ -187,5 +185,5 @@ Skills are namespaced by plugin: `/helical-platform:compute-embeddings` and so o
 with `claude plugin validate --strict .` and `claude plugin validate --strict
 plugins/helical-platform`, which CI also runs.
 
-When you release, bump `version` in **all three** `plugin.json` files: Claude Code only offers
+When you release, bump `version` in **both** `plugin.json` files: Claude Code only offers
 users an update when the version changes.
