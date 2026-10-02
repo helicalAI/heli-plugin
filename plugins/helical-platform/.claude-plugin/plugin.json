@@ -1,7 +1,7 @@
 {
   "name": "helical-platform",
   "displayName": "Helical Platform",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Compute embeddings with Helical foundation models, hosted on Helical's GPUs or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",

@@ -1,0 +1,13 @@
+interface:
+  display_name: "In-silico Perturbation"
+  short_description: "Screen gene knockouts by perturbing locally and embedding on Helical"
+  default_prompt: "Use $in-silico-perturbation to find gene knockouts that shift my diseased cells toward healthy."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "helical"
+      description: "Helical platform API: datasets, uploads, models, run triggers, and outputs"
+
+policy:
+  allow_implicit_invocation: true
