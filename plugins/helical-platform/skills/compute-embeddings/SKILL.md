@@ -30,9 +30,9 @@ string is present. Note `total` is the count across all pages, not the rows retu
 `get_dataset({ id })` for the full record, including `cellCount` and `geneCount` — worth
 reporting, because run time scales with them.
 
-There is **no upload tool**: datasets must already exist in the catalogue. If the user has
-their own `.h5ad`, say plainly that this surface cannot ingest it and that they need to
-add it through the Helical console.
+A user's own `.h5ad` can be added with `initiateDatasetUpload` → `completeDatasetUpload`
+→ `registerDataset`; follow those tools' descriptions for splitting the file. Once
+registered, it is embedded like any catalogue dataset.
 
 ## 2. Choose a model
 
@@ -98,6 +98,8 @@ and `s3_key`.
 ## Hand-off
 
 - Want the model trained on labels first? → `fine-tune-model`, then return here.
+- Want to knock out, knock down or overexpress genes? → `in-silico-perturbation`: edit the
+  counts locally, upload, and embed the perturbed file here.
 - Judging whether an embedding is good — separation of the conditions of interest in the
   UMAP versus a zero-shot baseline — is interpretation, not something these tools report.
 

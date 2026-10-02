@@ -14,6 +14,7 @@ Nothing starts on its own: every run is priced first and only launches after you
 |---|---|
 | `compute-embeddings` | dataset → model → quote → approve → run → outputs |
 | `fine-tune-model` | labelled dataset → trained, registered model |
+| `in-silico-perturbation` | edit genes locally → upload → embed → rank shifts toward a target state |
 | `check-credits` | reads your balance, explains what a run costs and when you're charged |
 | `reconnect-helical` | tells you where to sign in again when the connection drops |
 
@@ -82,6 +83,7 @@ plugins/helical-platform/
 │   ├── check-credits/
 │   ├── compute-embeddings/
 │   ├── fine-tune-model/
+│   ├── in-silico-perturbation/
 │   └── reconnect-helical/
 └── tests/                      # test_plugin_manifest.py
 ```
