@@ -141,6 +141,7 @@ def check_zip(path: Path, name: str) -> list[str]:
         for excluded in EXCLUDED:
             if any(n.startswith(f"{root}{excluded}/") for n in names):
                 problems.append(f"{root}{excluded}/ should not be packaged")
+        # The high 16 bits of external_attr hold the Unix st_mode; 0o170000 masks the file type, 0o120000 is a symlink.
         links = sorted(i.filename for i in infos if (i.external_attr >> 16) & 0o170000 == 0o120000)
         if links:
             problems.append(f"symlinks are rejected by OpenAI: {', '.join(links)}")

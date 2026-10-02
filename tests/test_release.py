@@ -213,7 +213,8 @@ def make_zip(path: Path, entries: dict[str, str], symlinks: tuple[str, ...] = ()
             zf.writestr(name, text)
         for name in symlinks:
             info = zipfile.ZipInfo(name)
-            info.external_attr = 0o120777 << 16  # S_IFLNK, as git archive writes links
+            # st_mode in the high 16 bits: symlink type (0o120000) | rwxrwxrwx (0o777), as git archive writes links.
+            info.external_attr = 0o120777 << 16
             zf.writestr(info, "target")
     return path
 
