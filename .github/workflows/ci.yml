@@ -20,7 +20,7 @@ jobs:
           export CODEX_HOME="$RUNNER_TEMP/codex"
           mkdir -p "$CODEX_HOME"   # codex resolves CODEX_HOME, it does not create it
 
-          expected=$(jq -re .version plugins/helical-platform/.codex-plugin/plugin.json)
+          expected=$(jq -re .version plugins/helical-platform/plugin.json)
           echo "plugin.json declares $expected"
 
           codex plugin marketplace add . --json

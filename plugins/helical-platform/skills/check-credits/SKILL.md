@@ -4,7 +4,7 @@ description: >-
   Read the user's Helical credit balance, tell them what a run will cost and when they are
   actually charged, and explain a run refused for insufficient credit. Use when the user
   asks what their balance is, whether they can afford a run, what an embedding or
-  fine-tune will cost, how to top up, or why a run would not start.
+  fine-tune will cost, or why a run would not start.
 ---
 
 # Credits: read the balance, explain the charge
@@ -67,21 +67,18 @@ will want to know.
 
 A **402 `insufficient_balance`** can come back either when the run is queued or when it is
 approved. Either way nothing launched and nothing was charged — but **the confirmation is spent**.
-Topping up does not make it approvable again; the run has to be re-requested from the trigger tool,
-which mints a fresh quote.
+A later change to the balance does not make it approvable again; the run has to be re-requested
+from the trigger tool, which mints a fresh quote.
 
-The 402 message names the shortfall and carries a buy-credits link. Relay that link as it stands: 
-it came from the platform and is correct for this account.
+Credits are managed in their Helical account, not through this plugin.
 
 Retrying the same request unchanged will not help, and the error says so. Do not loop.
 
-## Topping up
+## Where the account lives
 
-Credits live on the console, the site the user signed in to when they connected this plugin. Use 
-`console` URL `whoami` returned, or a link an error carried.
-
-Console **Credits** page has tabs for **buying credits, usage, and receipts**, which covers
-topping up and "where did my credits go". Account settings and docs live there too.
+The account lives on the console, **console.helical.bio**: the site the user signed in to when
+they connected this plugin. Use the `console` URL `whoami` returned. Account settings, usage
+history and docs live there.
 
 It is **not** `helical.bio`. That is the marketing site and holds nothing about their
 account, so sending them there is the same wrong turn as inventing a menu. Beyond the pages
@@ -97,5 +94,5 @@ something that does not exist.
 Read the balance with `whoami`, never guess it · one credit is one USD · re-read rather
 than reuse · a fixed amount per job plus a rate per processed cell, no deduplication · your arithmetic estimates, the trigger
 quotes — prefer the quote · charged at start, refunded in full on failure or cancellation ·
-a 402 spends the confirmation, so re-request the run after topping up · the console URL the
-platform gave you, never `helical.bio`, never an invented menu.
+a 402 spends the confirmation, so re-request the run once the balance covers it ·
+the console URL the platform gave you, never `helical.bio`, never an invented menu.

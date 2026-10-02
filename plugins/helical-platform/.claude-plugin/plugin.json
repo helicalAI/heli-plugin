@@ -2,7 +2,7 @@
   "name": "helical-platform",
   "displayName": "Helical Platform",
   "version": "0.2.0",
-  "description": "Compute embeddings and fine-tune Helical foundation models — hosted and billed per token, or locally on your own GPU with the open-source package.",
+  "description": "Compute embeddings with Helical foundation models, hosted on Helical's GPUs or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
     "email": "support@helical-ai.com",
@@ -11,6 +11,7 @@
   "homepage": "https://helical.bio",
   "repository": "https://github.com/helicalAI/heli-plugin",
   "license": "AGPL-3.0-or-later",
+  "icon": "./assets/icon.png",
   "keywords": [
     "embeddings",
     "fine-tuning",
@@ -18,5 +19,6 @@
     "bioinformatics",
     "foundation-models",
     "mcp"
-  ]
+  ],
+  "mcpServers": "./mcp.json"
 }

@@ -20,8 +20,8 @@ do I sign in?" is the one failure this skill exists to prevent.
 
 ## Say where to go, first time
 
-> Your Helical sign-in needs renewing. Sign in again at **console.helical.bio** and I'll
-> pick the embedding estimate back up — nothing has started, so nothing has been charged.
+> Your Helical sign-in needs renewing. Sign in again at <console-url-link-from-who-am-i-tool> and I'll
+> pick the embedding back up — nothing has started, so nothing has been charged.
 
 Adapt the four parts; do not reuse the sentence:
 
@@ -34,9 +34,8 @@ Adapt the four parts; do not reuse the sentence:
   something before it started, and is false when a session dropped part-way through a run
   that is still going. Say which case it is, or say nothing.
 
-**A link the failure carried beats the site** — a connect URL the platform pushed, the
-top-up link in a credit refusal. Relay that one instead, as it stands: it is specific to
-this account and this flow.
+**A sign-in link the failure carried beats the site** — a connect URL the platform pushed.
+Relay that one instead, as it stands: it is specific to this account and this flow.
 
 ## When the tools are not there at all
 
@@ -75,10 +74,14 @@ do and do not know, and give the link anyway.
 ## If signing in on the site does not clear it
 
 Then the connection's own stored credential is what is being refused. The plugin talks to
-`api.helical.bio`, and the client — not you — holds the credential for it, so the fix is
-that client's command: `claude mcp login helical`, or `claude mcp logout helical && claude
-mcp login helical` when it is the stored registration being rejected (`invalid_request`,
-`invalid_client`, "not registered"). On Codex, `codex mcp login helical`. On any other
+helical backend, and the client — not you — holds the credential for it, so the fix is
+that client's command. On Claude Code the plugin registers the server as
+`plugin:helical-platform:helical`, so it is `claude mcp login plugin:helical-platform:helical`,
+or `claude mcp logout plugin:helical-platform:helical && claude mcp login
+plugin:helical-platform:helical` when it is the stored registration being rejected
+(`invalid_request`, `invalid_client`, "not registered"); a server the user added by hand
+with `claude mcp add` is plain `helical` — `claude mcp list` shows which name this session
+has. On Codex, `codex mcp login helical`. On any other
 host, name that client's own reconnect affordance or say you do not know it — do not invent
 menu items. Run the command yourself if you can: it opens their browser and completes on
 its own callback, so their whole job is approving the page. With no browser on that machine,
@@ -91,11 +94,24 @@ only the account site, or a link the platform or the host printed itself.
 
 ## Then
 
+`health()` and `whoami()` are the cheapest way to confirm the connection is back: both take
+no arguments, spend no credit and start nothing. Prefer `whoami` when the user was
+mid-workflow, since it also returns the current balance.
+
 Retry the failed call once, and stop rather than loop if it fails on authentication again.
-If what failed was `start_embedding_run` or `start_finetuning_run`, check `list_runs`
-before re-issuing it — a session that dropped mid-workflow can leave a run going, and
-starting over is how one job gets billed twice. Re-price and re-confirm a stale quote
-rather than reusing it.
+
+**Before re-issuing anything that starts work**, check what the dropped session left
+behind — starting over is how one job gets billed twice:
+
+- `listPendingConfirmations()` for a run queued but not yet approved. A `triggerEmbedding`
+  that landed before the failure has already queued a confirmation, and re-triggering
+  returns a 409 without giving the id back — so list it and resolve that one instead.
+- `listDagRuns({ state: "running" })` for a run already going, and
+  `getConfirmationStatus({ id })` to settle whether an approval that timed out actually
+  launched.
+
+That second case is also where "nothing was charged" stops being true: an approval spent
+before the connection dropped has already launched the run. Check before saying it.
 
 ## Conventions
 
@@ -103,4 +119,5 @@ Where to go, in the first message, always · absent tools are the same failure a
 rejected one · a new session after signing in, where the host loads tools at start · the
 account site unless the platform sent its own link ·
 plain words, never the OAuth code · "nothing was charged" only when true · the client
-command second, never first · never build a sign-in URL · retry once, then stop.
+command second, never first · never build a sign-in URL · retry once, then stop · check
+for a queued confirmation or a running run before re-issuing anything that spends credit.
