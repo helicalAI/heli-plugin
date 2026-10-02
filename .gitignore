@@ -21,3 +21,6 @@ venv/
 
 # Reference test prompts. Not tracked.
 helical_test_prompts.xlsx
+
+# Release zips built by `make package`
+dist/
