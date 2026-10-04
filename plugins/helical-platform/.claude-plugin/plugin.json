@@ -12,6 +12,8 @@
   "repository": "https://github.com/helicalAI/heli-plugin",
   "license": "AGPL-3.0-or-later",
   "icon": "./assets/icon.png",
+  "privacyPolicyUrl": "https://helical.bio/plugin/privacy",
+  "termsOfServiceUrl": "https://helical.bio/plugin/terms",
   "keywords": [
     "embeddings",
     "fine-tuning",
