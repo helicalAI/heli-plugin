@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "helical-platform",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Compute embeddings with Helical foundation models, hosted on Helical's GPUs or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
@@ -35,8 +35,8 @@
         ],
         "websiteURL": "https://console.helical.bio",
         "supportURL": "https://console.helical.bio/contact",
-        "privacyPolicyURL": "https://console.helical.bio/privacy-policy",
-        "termsOfServiceURL": "https://console.helical.bio/terms-of-service",
+        "privacyPolicyURL": "https://helical.bio/plugin/privacy",
+        "termsOfServiceURL": "https://helical.bio/plugin/terms",
         "defaultPrompt": [
           "Embed my dataset with a Helical model.",
           "Fine-tune a model on my labelled dataset."
