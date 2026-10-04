@@ -35,8 +35,8 @@
         ],
         "websiteURL": "https://console.helical.bio",
         "supportURL": "https://console.helical.bio/contact",
-        "privacyPolicyURL": "https://console.helical.bio/privacy-policy",
-        "termsOfServiceURL": "https://console.helical.bio/terms-of-service",
+        "privacyPolicyURL": "https://helical.bio/plugin/privacy",
+        "termsOfServiceURL": "https://helical.bio/plugin/terms",
         "defaultPrompt": [
           "Embed my dataset with a Helical model.",
           "Fine-tune a model on my labelled dataset."
