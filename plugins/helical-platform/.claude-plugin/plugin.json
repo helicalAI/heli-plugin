@@ -1,7 +1,7 @@
 {
   "name": "helical-platform",
   "displayName": "Helical Platform",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Compute embeddings with Helical foundation models, hosted on Helical's GPUs or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
@@ -14,6 +14,8 @@
   "icon": "./assets/icon.png",
   "privacyPolicyUrl": "https://helical.bio/plugin/privacy",
   "termsOfServiceUrl": "https://helical.bio/plugin/terms",
+  "supportUrl": "https://console.helical.bio/contact",
+  "documentationUrl": "https://console.helical.bio/docs",
   "keywords": [
     "embeddings",
     "fine-tuning",
