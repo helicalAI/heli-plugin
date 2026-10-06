@@ -1,6 +1,6 @@
 interface:
   display_name: "Reconnect Helical"
-  short_description: "Restore an expired Helical sign-in, with the step in the first message"
+  short_description: "Connect Helical, approve its authorization link, or reconnect a refused sign-in"
   default_prompt: "Use $reconnect-helical to get my Helical connection signed in again."
 
 policy:

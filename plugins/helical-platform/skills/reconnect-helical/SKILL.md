@@ -1,106 +1,126 @@
 ---
 name: reconnect-helical
 description: >-
-  Tell the user where to go to reconnect when a Helical call fails on authentication, in
-  the message that reports the failure. Use when a Helical tool call fails with
-  invalid_grant, invalid_request, invalid_client, invalid_token, unauthorized_client, a
-  401, "OAuth authorization required", "Missing Bearer token", "Invalid JWT" or a host's
-  paraphrase of one of those ("This request requires more information"); when a Helical
-  call fails in a way that does not say whether authentication is the cause; when the
-  helical tools are missing from the session; or when the user asks where to sign in. For
-  a run refused over credit, use check-credits.
+  Get a Helical connection working when it is not: the plugin was installed but never
+  connected, a tool call came back with an authorization link, or a connection that worked
+  before is now refused. Use when the helical tools are missing from the session or the
+  host offers only an `authenticate` tool for it; when a Helical call returns "Authorization
+  required before this tool can run", "This request requires more information" or a link to
+  open; when it fails with invalid_grant, invalid_request, invalid_client, invalid_token,
+  unauthorized_client, a 401, "OAuth authorization required", "Missing Bearer token" or
+  "Invalid JWT"; when a call fails without saying why; or when the user asks how to sign in.
+  For a run refused over credit, use check-credits.
 ---
 
 # Reconnect Helical
 
-When a Helical call fails on authentication, **the user's next click belongs in that same
-message.** No message about a broken Helical connection leaves without the destination in
-it — not even one that cannot say why the connection broke. Leaving them to ask "so where
-do I sign in?" is the one failure this skill exists to prevent.
+Helical asks for two approvals, both in the browser: **connecting the plugin** in the
+client, and **one authorization the first time a tool runs**. Each failure below is one of
+them missing. Tell which from what you see, and put the user's next step in the same
+message that reports the problem — never leave them to ask "so what do I do?".
 
-## Say where to go, first time
+| What you see | Case |
+|---|---|
+| No `helical` tools at all, or only an `authenticate` tool for it | 1 — not connected |
+| A call returns a link to open, "Authorization required before this tool can run", or "This request requires more information" | 2 — authorization link |
+| A connection that worked before now fails with a 401 or an OAuth code | 3 — connection refused |
 
-> Your Helical sign-in needs renewing. Sign in again at <console-url-link-from-who-am-i-tool> and I'll
-> pick the embedding back up — nothing has started, so nothing has been charged.
+Not these: **`402` / `insufficient_balance`** is credit (`check-credits`), and **`403`** is
+a signed-in account without permission — reconnecting returns the same `403`.
 
-Adapt the four parts; do not reuse the sentence:
+## 1. Not connected
 
-- **What broke**, in plain words. Do not say "expired" unless you established that it
-  expired, and never quote the OAuth code at the user.
-- **Where to go** — the account site. `check-credits` owns its address and pages, so
-  consult that skill rather than reasoning about URLs here.
-- **What you will pick back up** once they are in, named as the user would name it.
-- **What it cost, only where true.** "Nothing was charged" holds when the failure stopped
-  something before it started, and is false when a session dropped part-way through a run
-  that is still going. Say which case it is, or say nothing.
+Installing the plugin and connecting it are two separate steps in every client. Skip the
+second and the plugin shows as enabled with none of its tools. Confirm it before you fix
+it, where the client lets you:
 
-**A sign-in link the failure carried beats the site** — a connect URL the platform pushed.
-Relay that one instead, as it stands: it is specific to this account and this flow.
+- **Claude Code**: `claude mcp list`. The plugin's server is
+  `plugin:helical-platform:helical` (`claude.ai Helical` when added from the Claude
+  directory, plain `helical` when added by hand). `! Needs authentication` is this case;
+  `✔ Connected` is not.
+- **Codex**, and the ChatGPT desktop app with a plugin added from GitHub: `codex mcp list`.
+  `Not logged in` under **Auth** is this case; `OAuth` is not.
+- **ChatGPT** from the public directory, **Claude Desktop** and **claude.ai** have no
+  command: ask whether Helical still offers **Connect** where the fix below points.
 
-## When the tools are not there at all
+Then connect it:
 
-No `helical` tools in the session — or the host calling the plugin enabled while reporting
-authentication as "unknown" — is this same failure with no error to read. It is not a
-reason to investigate the endpoint: a `405` to a plain `GET` proves only that the URL is
-up, and says nothing about whether the user is signed in. Give the destination anyway, and
-say that a new session is needed, because hosts load their tool surface at session start
-and signing in now will not populate this one:
+- **Claude Code** (CLI, and the Code tab in Claude Desktop). If the host offers a helical
+  `authenticate` tool (e.g. `mcp__plugin_helical-platform_helical__authenticate`), call it
+  and relay the link it returns; the tools load once the user approves, with no new
+  session. If their browser then lands on a `localhost` page that will not load, ask for
+  the address-bar URL and pass it to the matching `complete_authentication` tool.
+  Otherwise the user runs `/mcp` → the Helical server → **Authenticate**, or
+  `claude mcp login plugin:helical-platform:helical` in their own terminal. Do not run that
+  command yourself: it needs an interactive terminal and refuses without one.
+- **Codex**: `codex mcp login helical`. You can run this one: it opens their browser and
+  waits for the approval. `/mcp` inside Codex only lists servers. In the ChatGPT desktop
+  app the same step is **Settings** → **MCP servers** → **Authenticate**.
+- **ChatGPT** from the public directory: **Settings** → **Plugins** → Helical Platform →
+  **Connect**.
+- **Claude Desktop** and **claude.ai**: **Customize** → **Connectors** → Helical →
+  **Connect**.
 
-> None of the Helical tools loaded here, which means this connection is not signed in.
-> Sign in at **console.helical.bio**, then start a new session and ask me for the health
-> check again — reconnecting mid-session will not bring the tools back.
+Except through the `authenticate` tool, say a new session may be needed: hosts that load
+their tools at session start will not add them to this one. The Connect step of the
+walkthrough at `<who-am-i-tool-console-url>docs?section=walkthrough` has the same steps
+for every client.
 
-"Reconnect or reload the plugin" without an address is the failure this replaces: it names
-a chore instead of a destination.
+## 2. Authorization link
 
-## Which failures these are
+The connection is fine; Helical needs one more approval before the tool can run. It is
+expected on the first tool call after connecting, and again now and then — months apart,
+or after the account was signed out everywhere. Reconnecting the client does not clear
+it, and neither does anything in case 1 or 3.
 
-Any OAuth code, by definition: `invalid_grant`, `invalid_request`, `invalid_client`,
-`invalid_token`, `unauthorized_client`. They come from the sign-in path, not from the tool
-you called, so its arguments are never the problem. Hosts paraphrase the code and discard
-the description that explained it — **"This request requires more information" is
-`invalid_request`** — so treat the paraphrase as the code. Also a `401`, "OAuth
-authorization required", "Missing Bearer token", "Invalid JWT", or the `helical` tools
-missing from the session entirely.
+The link reaches you in one of two shapes: the host shows its own prompt to open a URL, or
+the call fails with "Authorization required before this tool can run" followed by the
+link. Relay that link exactly as it came — it belongs to this user and this request. 
+The user opens it and approves (normally one click, since they are already signed in),
+then you retry the same call.
 
-Not these two: **`402` / `insufficient_balance`** is credit rather than sign-in
-(`check-credits`), and **`403`** is an authenticated account without permission —
-reconnecting returns the same `403`.
+## 3. Connection refused
 
-**When the error does not say**, do not end the turn on "I cannot tell whether this is
-authentication". Signing in is free and rules out the whole path at once, so say what you
-do and do not know, and give the link anyway.
+A connection that worked before is rejected: a `401`, "OAuth authorization required",
+"Missing Bearer token", "Invalid JWT", or an OAuth code (`invalid_grant`,
+`invalid_request`, `invalid_client`, `invalid_token`, `unauthorized_client`). These come
+from the client's sign-in, not from the tool you called, so its arguments are never the
+problem. Never quote the code at the user; say what broke in plain words, and do not say
+"expired" unless you know it expired.
 
-## If signing in on the site does not clear it
+The client holds that sign-in, so the fix is the client's — clear it and connect again:
 
-Then the connection's own stored credential is what is being refused. The plugin talks to
-helical backend, and the client — not you — holds the credential for it, so the fix is
-that client's command. On Claude Code the plugin registers the server as
-`plugin:helical-platform:helical`, so it is `claude mcp login plugin:helical-platform:helical`,
-or `claude mcp logout plugin:helical-platform:helical && claude mcp login
-plugin:helical-platform:helical` when it is the stored registration being rejected
-(`invalid_request`, `invalid_client`, "not registered"); a server the user added by hand
-with `claude mcp add` is plain `helical` — `claude mcp list` shows which name this session
-has. On Codex, `codex mcp login helical`. On any other
-host, name that client's own reconnect affordance or say you do not know it — do not invent
-menu items. Run the command yourself if you can: it opens their browser and completes on
-its own callback, so their whole job is approving the page. With no browser on that machine,
-`--no-browser` prints a URL to open elsewhere and paste back.
+- **Claude Code**: `claude mcp logout plugin:helical-platform:helical && claude mcp login
+  plugin:helical-platform:helical`, in the user's own terminal, or `/mcp` → the Helical
+  server → **Re-authenticate**.
+- **Codex**: `codex mcp logout helical && codex mcp login helical`.
+- **ChatGPT**: **Settings** → **Plugins** → Helical Platform → **Reconnect** (or
+  **Disconnect**, then **Connect**).
+- **Claude Desktop** and **claude.ai**: **Customize** → **Connectors** → Helical →
+  **Connect**.
 
-**Never build a sign-in URL.** Assembling one, or registering a client with `curl` to get
-something clickable, authorizes a client you created and leaves the credential the plugin
-uses untouched: the user signs in, it works, and the next call fails identically. Relay
-only the account site, or a link the platform or the host printed itself.
+On any other host, name that client's own reconnect affordance or say you do not know it —
+do not invent menu items.
+
+**When the error does not say** which case it is, do not end the turn on "I cannot tell".
+Check the status commands in case 1, then give the step that matches.
+
+## Never build a link
+
+Assembling a sign-in or authorization URL, or registering a client with `curl` to get
+something clickable, authorizes something the plugin does not use: the user approves it,
+it seems to work, and the next call fails the same way. Relay only a link the host or a
+Helical tool printed.
 
 ## Then
 
-`health()` and `whoami()` are the cheapest way to confirm the connection is back: both take
-no arguments, spend no credit and start nothing. Prefer `whoami` when the user was
-mid-workflow, since it also returns the current balance.
+`health()` and `whoami()` confirm the connection is back: both take no arguments, spend no
+credit and start nothing. Prefer `whoami` when the user was mid-workflow, since it also
+returns the current balance.
 
-Retry the failed call once, and stop rather than loop if it fails on authentication again.
+Retry the failed call once, and stop rather than loop if it fails the same way again.
 
-**Before re-issuing anything that starts work**, check what the dropped session left
+**Before re-issuing anything that starts work**, check what the failed attempt left
 behind — starting over is how one job gets billed twice:
 
 - `listPendingConfirmations()` for a run queued but not yet approved. A `triggerEmbedding`
@@ -110,14 +130,16 @@ behind — starting over is how one job gets billed twice:
   `getConfirmationStatus({ id })` to settle whether an approval that timed out actually
   launched.
 
-That second case is also where "nothing was charged" stops being true: an approval spent
-before the connection dropped has already launched the run. Check before saying it.
+"Nothing was charged" holds only when the failure stopped something before it started. An
+approval spent before the connection dropped has already launched the run, so check before
+saying it.
 
 ## Conventions
 
-Where to go, in the first message, always · absent tools are the same failure as a
-rejected one · a new session after signing in, where the host loads tools at start · the
-account site unless the platform sent its own link ·
-plain words, never the OAuth code · "nothing was charged" only when true · the client
-command second, never first · never build a sign-in URL · retry once, then stop · check
-for a queued confirmation or a running run before re-issuing anything that spends credit.
+The next step in the first message, always · tell the three cases apart before fixing ·
+check status with `claude mcp list` / `codex mcp list` where the client has one · call the
+host's `authenticate` tool when it offers one · run `codex mcp login` yourself, hand
+`claude mcp login` to the user · relay an authorization link exactly as it came, then
+retry · plain words, never the OAuth code · never build a link · retry once, then stop ·
+check for a queued confirmation or a running run before re-issuing anything that spends
+credit.
