@@ -1,0 +1,13 @@
+interface:
+  display_name: "Compare Embeddings"
+  short_description: "Plot embeddings from one or more models in an interactive UMAP explorer"
+  default_prompt: "Use $compare-embeddings to compare the embeddings of my dataset across models."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "helical"
+      description: "Helical platform API: embedding runs and their downloadable artifacts"
+
+policy:
+  allow_implicit_invocation: true

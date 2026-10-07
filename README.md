@@ -13,6 +13,7 @@ Nothing starts on its own: every run is priced first and only launches after you
 | Skill | What it does |
 |---|---|
 | `compute-embeddings` | dataset → model → quote → approve → run → outputs |
+| `compare-embeddings` | finished runs → one interactive UMAP explorer: a view per model, coloured by datasource |
 | `fine-tune-model` | labelled dataset → trained, registered model |
 | `in-silico-perturbation` | edit genes locally → upload → embed → rank shifts toward a target state |
 | `check-credits` | reads your balance, explains what a run costs and when you're charged |

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<!--artifact:start-->
+<title>UMAP explorer</title>
+<style>
+  /* Layout: title, a controls panel, one large plot with Plotly's legend, a note line,
+     the datasource-mixing table and the provenance footer. */
+  :root {
+    --bg: #ffffff; --panel: #f5f5f5; --text: #1a1a1a; --muted: #666666; --faint: #8f8f8f;
+    --grid: #e6e6e6; --border: #d4d4d4; --accent: #e8590c; --error: #c92a2a;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161616; --panel: #232323; --text: #ececec; --muted: #a0a0a0; --faint: #7d7d7d;
+      --grid: #2e2e2e; --border: #3a3a3a; --accent: #ff8a4c; --error: #ff6b6b; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161616; --panel: #232323; --text: #ececec; --muted: #a0a0a0; --faint: #7d7d7d;
+    --grid: #2e2e2e; --border: #3a3a3a; --accent: #ff8a4c; --error: #ff6b6b; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); }
+  .wrap { max-width: 1600px; margin: 0 auto; padding-inline: 16px; padding-block: 16px 28px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+  .sub { color: var(--muted); margin: 0 0 14px; max-width: 110ch; }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-end;
+              background: var(--panel); padding: 14px 18px; border-radius: 6px; }
+  .controls label { display: flex; flex-direction: column; gap: 5px; font-size: 11px;
+                    letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  select { font: 14px var(--font); color: var(--text); background: var(--bg); text-transform: none; letter-spacing: 0;
+           border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; min-width: 260px; max-width: 100%; }
+  select:hover { border-color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=range] { accent-color: var(--accent); width: 170px; }
+  .val { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2ch; }
+  .title { margin: 16px 0 6px; font-size: 14px; }
+  #plot { width: 100%; height: min(72vh, 760px); }
+  .note { color: var(--muted); margin-top: 8px; }
+  .error { color: var(--error); }
+  section { margin-top: 22px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  section p { margin: 0 0 8px; color: var(--muted); max-width: 95ch; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 5px 12px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+  th { font-weight: 500; color: var(--muted); }
+  td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .prov { color: var(--muted); font-size: 12px; margin-top: 22px; overflow-wrap: anywhere; }
+  @media (max-width: 760px) {
+    #plot { height: 460px; }
+    select { min-width: 0; width: 100%; }
+    .controls label { flex: 1 1 100%; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/4.1.2/plotly-gl2d.min.js"
+        integrity="sha512-xULuHjvWsROP8shsvLbAHDCsdrlJDW8V9OfLUftotenyJLLhqvV7msEgKmiXq0bOQWLYuf9tXHft3IJqzzuqLQ=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<div class="wrap">
+  <h1 id="h1">Foundation-model UMAP explorer</h1>
+  <p class="sub">Pick a model to see its embeddings, coloured by datasource. Click a legend entry to hide a datasource,
+    double-click it to show only that one. Drag to zoom, scroll to zoom at the cursor, double-click the plot to reset.</p>
+  <div class="controls">
+    <label for="model">Model <select id="model"></select></label>
+    <label for="size">Point size <span class="row"><input id="size" type="range" min="1" max="10" step="0.5" value="3"><span class="val" id="sizeVal">3</span></span></label>
+  </div>
+  <div class="title" id="plotTitle"></div>
+  <div id="plot" role="img" aria-label="UMAP of the selected model's embeddings, coloured by datasource"></div>
+  <div class="note" id="note"></div>
+  <section id="mixing" hidden>
+    <h2>Do the datasources mix?</h2>
+    <p>Share of each cell's <span id="k"></span> nearest neighbours that come from its own datasource, computed on the
+      embeddings, not on the plot. Close to chance means the model mixes the datasources; close to 100% means it keeps them apart.</p>
+    <div class="scroll" id="mixTable"></div>
+  </section>
+  <div class="prov" id="prov"></div>
+</div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function main() {
+  if (!DATA) { $("plot").innerHTML = '<p class="error">This page has no data. Build it with build_comparison.py.</p>'; return; }
+  const models = DATA.models, S = {model: 0, size: 3};
+  // One trace per datasource, in the same order for every model, so a datasource keeps
+  // its Plotly default colour when the model changes.
+  const sources = [...new Set(models.flatMap(m => m.datasources.map(d => d.name)))];
+
+  $("h1").textContent = `Foundation-model UMAP explorer — ${models.length} model${models.length > 1 ? "s" : ""}, ` +
+    `${sources.length} datasource${sources.length > 1 ? "s" : ""}`;
+  $("model").innerHTML = models.map((m, i) => `<option value="${i}">${esc(m.name)} (${m.dim}d)</option>`).join("");
+  $("model").onchange = e => { S.model = +e.target.value; render(); };
+  $("size").oninput = e => { S.size = +e.target.value; $("sizeVal").textContent = S.size; render(); };
+
+  function render() {
+    const m = models[S.model], n = m.x.length;
+    $("plotTitle").textContent = `${m.name} — UMAP of the ${m.dim}d embedding, coloured by datasource`;
+    $("note").textContent = `${n.toLocaleString()} cells: ` + m.datasources.map(d => `${d.name} ${d.cells.toLocaleString()}`).join(", ") + ".";
+    if (!window.Plotly) {
+      $("plot").innerHTML = '<p class="error">The plotting library could not be loaded from cdnjs.cloudflare.com. This page needs internet access to draw the plot.</p>';
+      return;
+    }
+    const traces = sources.map(name => {
+      const s = m.datasources.findIndex(d => d.name === name), idx = [];
+      if (s >= 0) for (let i = 0; i < n; i++) if (m.source[i] === s) idx.push(i);
+      return {type: "scattergl", mode: "markers", name, showlegend: s >= 0,
+              x: idx.map(i => m.x[i]), y: idx.map(i => m.y[i]), marker: {size: S.size * 2, opacity: .8},
+              hovertemplate: `${esc(name)}<extra></extra>`};
+    });
+    const axis = t => ({title: {text: t, font: {size: 12, color: css("--muted")}}, gridcolor: css("--grid"),
+                        zeroline: false, tickfont: {color: css("--faint"), size: 11}});
+    Plotly.react($("plot"), traces, {
+      margin: {l: 52, r: 12, t: 8, b: 48}, hovermode: "closest", uirevision: "model" + S.model,
+      paper_bgcolor: css("--bg"), plot_bgcolor: css("--bg"), font: {family: css("--font"), color: css("--text")},
+      legend: {title: {text: "Datasource"}, itemsizing: "constant", font: {size: 13}},
+      xaxis: axis("UMAP1"), yaxis: axis("UMAP2"),
+    }, {displaylogo: false, responsive: true, scrollZoom: true, modeBarButtonsToRemove: ["toImage", "autoScale2d", "lasso2d", "select2d"]});
+  }
+
+  const mixed = models.filter(m => m.mixing);
+  if (mixed.length) {
+    $("mixing").hidden = false; $("k").textContent = DATA.neighbors;
+    $("mixTable").innerHTML = "<table><thead><tr><th>Model</th><th>Datasources</th><th>Same datasource</th><th>Chance</th></tr></thead><tbody>" +
+      mixed.map(m => `<tr><td>${esc(m.name)}</td><td>${m.datasources.map(d => esc(d.name)).join(", ")}</td>` +
+        `<td class="num">${(m.mixing.same * 100).toFixed(0)}%</td><td class="num">${(m.mixing.chance * 100).toFixed(0)}%</td></tr>`).join("") +
+      "</tbody></table>";
+  }
+  $("prov").innerHTML = models.map(m => `${esc(m.name)}: ` + m.datasources.map(d => `${esc(d.name)} (${esc(d.file)})`).join(", ")).join(" · ") +
+    `.<br>UMAP: PCA(50) → umap-learn n_neighbors=${DATA.neighbors}, min_dist=0.3, seed ${DATA.seed}. ` +
+    `Generated ${esc(DATA.generated)}; plot drawn with Plotly 4.1.2 from cdnjs.`;
+
+  render();
+  if (window.Plotly) {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+    new MutationObserver(render).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+  }
+}
+main();
+</script>
+<!--artifact:end-->
+</body>
+</html>

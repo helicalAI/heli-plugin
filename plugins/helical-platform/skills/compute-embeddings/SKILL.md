@@ -100,8 +100,10 @@ and `s3_key`.
 - Want the model trained on labels first? → `fine-tune-model`, then return here.
 - Want to knock out, knock down or overexpress genes? → `in-silico-perturbation`: edit the
   counts locally, upload, and embed the perturbed file here.
-- Judging whether an embedding is good — separation of the conditions of interest in the
-  UMAP versus a zero-shot baseline — is interpretation, not something these tools report.
+- Want to plot the result, or compare it with other models on the same dataset? →
+  `compare-embeddings`: an interactive UMAP explorer, one view per model, coloured by datasource.
+  Judging whether an embedding is good is still interpretation; that page gives the
+  evidence, not the verdict.
 
 ## Conventions
 
