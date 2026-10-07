@@ -40,6 +40,29 @@ Then run `/mcp` to sign in. Claude Code registers the server as
 `plugin:helical-platform:helical`, so from the shell it is
 `claude mcp login plugin:helical-platform:helical`.
 
+## Testing your local changes in Claude Code
+
+To try unreleased changes (a new or edited skill, say) before they reach `main`, install
+the plugin from your checkout instead of GitHub. Run this from the repository root:
+
+```sh
+claude plugin marketplace remove helical-marketplace
+claude plugin marketplace add ./          # run from ~/workplace/heli-plugin; a bare "." is rejected
+claude plugin install helical-platform@helical-marketplace --scope local
+```
+
+- `remove` comes first because the GitHub install registers a marketplace with the same
+  name, `helical-marketplace`. Skip it if you never installed from GitHub.
+- `--scope local` enables the plugin for this directory only. The setting goes in
+  `.claude/settings.local.json`, which git ignores, so it is never committed. The
+  marketplace itself is registered for your whole user, though: until you switch it back,
+  any install or update from `helical-marketplace` comes from your checkout.
+- Start a new Claude Code session in the same directory, run `/mcp` to sign in, then check
+  that your skill is listed, for example `/helical-platform:compare-embeddings`.
+
+To go back to the released plugin, remove the marketplace again and re-add it from GitHub
+as above.
+
 ## Installing it in Codex CLI
 
 From GitHub, pinned to the released branch:
