@@ -16,7 +16,7 @@ Nothing starts on its own: every run is priced first and only launches after you
 | `fine-tune-model` | labelled dataset → trained, registered model |
 | `in-silico-perturbation` | edit genes locally → upload → embed → rank shifts toward a target state |
 | `check-credits` | reads your balance, explains what a run costs and when you're charged |
-| `reconnect-helical` | tells you where to sign in again when the connection drops |
+| `reconnect-helical` | connects the plugin, relays the authorization link, or reconnects a refused sign-in |
 
 In Claude Code, skills are namespaced by plugin: `/helical-platform:compute-embeddings`
 and so on.
@@ -59,11 +59,16 @@ codex plugin add helical-platform@helical-marketplace
 
 The plugin holds no credentials. `mcp.json` names the remote endpoint
 (`https://api.helical.bio/mcp`), and your MCP client signs you in through the browser using
-OAuth (Authorization Code + PKCE).
+OAuth (Authorization Code + PKCE). Installing does not sign you in: until you connect, the
+plugin shows as enabled with none of its tools.
 
 ```sh
-/mcp        # the select the mcp link to helical and authenticate to open the browser to sign in
+claude mcp login plugin:helical-platform:helical   # Claude Code; or /mcp → helical → Authenticate
+codex mcp login helical                            # Codex CLI, IDE extension, ChatGPT desktop
 ```
+
+Both take `--no-browser` on a machine without one. ChatGPT's directory install signs in with
+**Connect** after **Install plugin**, or later under **Settings** → **Plugins**.
 
 Your account, credits and usage history live at [console.helical.bio](https://console.helical.bio).
 
