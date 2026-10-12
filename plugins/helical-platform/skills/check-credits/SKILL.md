@@ -32,9 +32,10 @@ credits = jobs × (credits_per_job + cells × passes × credits_per_cell)
   launch is **one job**.
 - `credits_per_job` pays for the work a job does before its first cell, so it is the same
   for ten cells or a million. On a small dataset it is most of the cost.
-- `passes` is **1 for an embedding** and **the epoch count for fine-tuning** — which is why
-  fine-tuning the same dataset costs several times what embedding it does. The per-job
-  amount is paid once, not once per epoch.
+- `passes` is **1 for an embedding**. For fine-tuning it is **3 × the epoch count**: a
+  training step is a forward plus a backward pass, charged as three. A validation dataset
+  adds its own cells **once per epoch**. That is why fine-tuning the same dataset costs
+  many times what embedding it does. The per-job amount is paid once, not once per epoch.
 - Both rates are on every `listModels` entry, and differ per model. A model whose rates are
   `null` is not priced and cannot be run here; it is not free.
 - A fine-tuned model is charged at the rates of the `base_model` it descends from; it has no
@@ -44,11 +45,13 @@ credits = jobs × (credits_per_job + cells × passes × credits_per_cell)
 Use this when the user is deciding **whether** to run: `cellCount` from `listDatasets` or
 `getDataset`, and the two rates from `listModels`. For example, with a model at
 `credits_per_job` 0.03 and `credits_per_cell` 0.000003, embedding 300,000 cells is
-`1 × (0.03 + 300000 × 1 × 0.000003)` = **0.93 credits**. Read the real rates from `listModels`
-rather than reusing these.
+`1 × (0.03 + 300000 × 1 × 0.000003)` = **0.93 credits**. Fine-tuning the same 300,000 cells
+for 2 epochs, with a 30,000-cell validation dataset, is
+`0.03 + (300000 × 2 × 3 + 30000 × 2) × 0.000003` = **5.61 credits**. Read the real rates from
+`listModels` rather than reusing these.
 
 **But your arithmetic is an estimate, not the quote.** When a run is actually queued,
-`triggerEmbedding` prices it and returns the platform's own figure which is what the charge will 
+`triggerEmbedding` or `triggerFinetuning` prices it and returns the platform's own figure which is what the charge will 
 read. Queuing is free and starts nothing, so prefer that figure once it exists, and relay it rather
 than recomputing.
 
