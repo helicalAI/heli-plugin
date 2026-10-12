@@ -42,9 +42,8 @@ Without one, the run trains with no validation.
 
 `listModels()`. Fine-tune from a `base_models` entry: pass its `name` as `model` and omit
 `model_version`. To train an existing fine-tune further, pass a `models` entry's `name`
-plus its `version`, as a number, in `model_version`. Only promoted models can launch here
-(see step 5). Pick a model whose `credits_per_cell` is not `null`; an unpriced model cannot
-run here.
+plus its `version`, as a number, in `model_version`, promoted or not. Pick a model whose
+`credits_per_cell` is not `null`; an unpriced model cannot run here.
 
 Before committing: if the user wants representations rather than a classifier, a
 zero-shot embedding may already answer it. `compute-embeddings` is far cheaper and faster.
@@ -131,15 +130,10 @@ On approval, `outcome.dag_run_id` names the run. Poll `getRunDetails({ runId })`
 sensible interval and keep the user informed. On failure, `getDagErrors({ runId })` says
 what went wrong. A failed or cancelled run is refunded in full.
 
-On success the model is registered **unpromoted**. `listModels({ status: "unpromoted" })`
-shows it. Runs on this surface only accept promoted models, and these tools cannot promote
-one. So the new model cannot yet be used here for embeddings or further training. Tell the
-user this plainly; do not promise an embedding with it.
-
-`listModels` still shows a price for it, taken from its `base_model`, so a launch can look
-possible. It is refused with a 400 saying there is no cell price for the model. That
-refusal means the model is unpromoted, not that it is unpriced. Do not retry it, and do
-not relay the raw message.
+On success the model is registered under `registered_model_name` and shows in
+`listModels` `models`, unpromoted. Promotion is only a label here: the model can be used
+straight away for embeddings or further training. Pass its `name` and `version`. It is
+charged at its `base_model`'s rates.
 
 ## Judging whether it worked
 
@@ -147,8 +141,8 @@ Be honest about the limit: these tools report run state and artifacts, not a tra
 curve or a metric. `getRunDetails` lists the artifacts. `downloadArtifact` fetches a
 single file, such as a metrics file if the run wrote one, but not a checkpoint directory.
 
-Once the model is promoted, the practical comparison here is an embedding from the base
-model against one from the fine-tuned model, judged on the UMAP. Offer that rather than
+The practical comparison here is an embedding from the base model against one from the
+fine-tuned model, judged on the UMAP. Offer that rather than
 claiming a quality verdict the tools cannot support.
 
 ## Conventions
@@ -156,5 +150,5 @@ claiming a quality verdict the tools cannot support.
 `datasetId`, never a path · scope is derived from the signed-in user · verify the label
 column before queuing · validate with a separate dataset, never a split · send only the
 schema's fields · queue → relay the quote → explicit yes → `resolveConfirmation` · poll the
-run · a new fine-tune is unpromoted and cannot run here yet · never print credentials or
+run · a new fine-tune can run here at once, promoted or not · never print credentials or
 raw upstream errors.
