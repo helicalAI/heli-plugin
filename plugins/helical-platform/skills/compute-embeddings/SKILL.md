@@ -40,17 +40,13 @@ registered, it is embedded like any catalogue dataset.
 `listModels()`. It returns two lists:
 
 - `base_models`: foundation models. Pass the `name` as `model` and omit `model_version`.
-- `models`: this workspace's fine-tuned models, promoted ones by default. Pass the `name`
-  as `model` and the `version`, as a number, as `model_version`. Never pass `base_model`.
+- `models`: the user's own fine-tuned models, promoted or not. Pass the `name` as `model`
+  and the `version`, as a number, as `model_version`. Never pass `base_model`.
 
-Only single-cell models are listed, and only those can run here. Every entry carries its
-rates, `credits_per_job` and `credits_per_cell`. Pick one whose `credits_per_cell` is not
-`null`; an unpriced model cannot run here.
-
-Only promoted fine-tunes can launch. `listModels({ status: "unpromoted" })` shows the
-others, still with a price, but a launch with one is refused with a 400 saying there is no
-cell price for the model. That means it is unpromoted, not unpriced. Do not retry it, and
-do not relay the raw message.
+Any of them can run here; promotion is only a label. Only single-cell models are listed,
+and only those can run here. Every entry carries its rates, `credits_per_job` and
+`credits_per_cell`; a fine-tune is priced at its `base_model`'s rates. Pick one whose
+`credits_per_cell` is not `null`; an unpriced model cannot run here.
 
 ## 3. Queue it, show the price, then approve
 
@@ -104,8 +100,8 @@ A UMAP is its own run. If one consumed this embedding, it is listed in the run's
 
 ## Hand-off
 
-- Want the model trained on labels first? → `fine-tune-model`. Its result must be promoted
-  before it can be embedded here.
+- Want the model trained on labels first? → `fine-tune-model`. Its result can be embedded
+  here as soon as the run succeeds.
 - Want to knock out, knock down or overexpress genes? → `in-silico-perturbation`: edit the
   counts locally, upload, and embed the perturbed file here.
 - Cost and balance → `check-credits`.
