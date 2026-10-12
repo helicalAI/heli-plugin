@@ -25,7 +25,7 @@ a project or conversation identifier.
 `listDatasets({ name?, author?, organism?, tissue?, disease?, dataPath?, limit? })`. The
 filters combine. `name`, `author` and `dataPath` match a case-insensitive substring;
 `organism`, `tissue` and `disease` match an exact element of the dataset's array field, so
-`organism: "human"` only matches if that exact string is present. `limit` defaults to 10,
+`organism: "Homo sapiens"` matches but `"human"` does not. `limit` defaults to 10,
 at most 20. `total` counts every match, not just the rows returned.
 
 `getDataset({ id })` for the full record, including `cellCount` and `geneCount`. Report

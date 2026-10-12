@@ -51,9 +51,9 @@ for 2 epochs, with a 30,000-cell validation dataset, is
 `listModels` rather than reusing these.
 
 **But your arithmetic is an estimate, not the quote.** When a run is actually queued,
-`triggerEmbedding` or `triggerFinetuning` prices it and returns the platform's own figure which is what the charge will 
-read. Queuing is free and starts nothing, so prefer that figure once it exists, and relay it rather
-than recomputing.
+`triggerEmbedding` or `triggerFinetuning` prices it and returns the platform's own figure,
+which is what the charge will read. Queuing is free and starts nothing, so prefer that
+figure once it exists, and relay it rather than recomputing.
 
 ## When the charge actually happens
 
