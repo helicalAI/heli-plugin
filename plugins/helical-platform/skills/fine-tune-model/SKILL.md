@@ -102,7 +102,7 @@ it a name that says what makes this model different.
 
 ## 4. Show the price, then approve
 
-The reply's `message` carries the platform's quote: the cells it counts and the most it
+The reply carries the platform's quote: the cells it counts and the most it
 will cost. Relay that figure; do not recompute it. It is usually many times an embedding
 of the same dataset, because each epoch makes several passes over the training cells, and
 validation adds a pass over the validation cells each epoch.
