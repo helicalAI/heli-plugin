@@ -22,11 +22,8 @@ a project or conversation identifier.
 
 ## 1. Select the dataset
 
-`listDatasets({ name?, author?, organism?, tissue?, disease?, dataPath?, limit? })`. The
-filters combine. `name`, `author` and `dataPath` match a case-insensitive substring;
-`organism`, `tissue` and `disease` match an exact element of the dataset's array field, so
-`organism: "Homo sapiens"` matches but `"human"` does not. `limit` defaults to 10,
-at most 20. `total` counts every match, not just the rows returned.
+`listDatasets` finds the dataset; its description covers the filters. `organism` matches
+the full name exactly, so `"Homo sapiens"` matches but `"human"` does not.
 
 `getDataset({ id })` for the full record, including `cellCount` and `geneCount`. Report
 them: run time and price scale with the cell count.
@@ -45,7 +42,7 @@ registered, it is embedded like any catalogue dataset.
 
 Any of them can run here; promotion is only a label. Only single-cell models are listed,
 and only those can run here. Every entry carries its rates, `credits_per_job` and
-`credits_per_cell`; a fine-tune is priced at its `base_model`'s rates. Pick one whose
+`credits_per_cell`; a fine-tuned model is priced at its `base_model`'s rates. Pick one whose
 `credits_per_cell` is not `null`; an unpriced model cannot run here.
 
 ## 3. Queue it, show the price, then approve
@@ -55,10 +52,9 @@ triggerEmbedding({ datasetId, model, model_version? })
 ```
 
 Send only these fields (and `pretrained_embedding_species`, if the user asks for it). The
-tool refuses any other field with a 400. The platform picks the batch size and the
-modality itself, so do not send `batch_size` or `modalities`.
+tool refuses any other field with a 400.
 
-The reply's `message` carries the platform's quote: the cells it counts and the most it
+The reply carries the platform's quote: the cells it counts and the most it
 will cost. Relay that figure; do not recompute it. Get an explicit yes, then call
 `resolveConfirmation({ id: confirmation_id, decision: "approve" })`. If the user declines,
 resolve it with `"reject"`.
@@ -94,9 +90,6 @@ serves one file of any size, binary included, but not a directory.
 If the matrix carries cell ids, join on them. If it is a bare matrix, check its row count
 equals the dataset's `cellCount` before assuming its rows follow the dataset's order, and
 say you assumed it.
-
-A UMAP is its own run. If one consumed this embedding, it is listed in the run's
-`child_runs`, and its `umap` artifact downloads the same way.
 
 ## Hand-off
 
