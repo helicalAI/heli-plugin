@@ -2,33 +2,31 @@
 name: compute-embeddings
 description: >-
   Compute cell embeddings for a single-cell dataset with a Helical foundation model, then
-  locate the outputs. Use when the user wants embeddings, representations, or features
+  download the outputs. Use when the user wants embeddings, representations, or features
   from a dataset already in the platform catalogue. For training a model on labelled data,
   use fine-tune-model instead.
 ---
 
 # Compute embeddings
 
-Turns a catalogue dataset plus a foundation model into an embedding matrix and a UMAP.
+Turns a catalogue dataset plus a foundation model into an embedding matrix.
 
-**The one thing to understand before starting:** `start_embedding_run` consumes real
-compute and starts immediately. Nothing downstream will ask the user to confirm — there is
-no approval screen for the user to click through. **You are the
-confirmation step.** State the dataset, the model, and what the run will do, and get an
-explicit yes before calling it.
+**The one thing to understand before starting:** `triggerEmbedding` does not start
+anything. It queues the run and returns a `confirmation_id` and the platform's price. The
+run starts only when `resolveConfirmation` approves it, and **that call is the user's
+approval**. State the dataset, the model and the price, and get an explicit yes before
+making it.
 
 You also cannot choose a project: scope comes from the signed-in user, and no tool accepts
 a project or conversation identifier.
 
 ## 1. Select the dataset
 
-`list_datasets({ name?, organism?, tissue?, disease?, limit? })` — `name` and `author`
-match as case-insensitive substrings; `organism`, `tissue` and `disease` match an exact
-element of the dataset's array field, so `organism: "human"` only matches if that exact
-string is present. Note `total` is the count across all pages, not the rows returned.
+`listDatasets` finds the dataset; its description covers the filters. `organism` matches
+the full name exactly, so `"Homo sapiens"` matches but `"human"` does not.
 
-`get_dataset({ id })` for the full record, including `cellCount` and `geneCount` — worth
-reporting, because run time scales with them.
+`getDataset({ id })` for the full record, including `cellCount` and `geneCount`. Report
+them: run time and price scale with the cell count.
 
 A user's own `.h5ad` can be added with `initiateDatasetUpload` → `completeDatasetUpload`
 → `registerDataset`; follow those tools' descriptions for splitting the file. Once
@@ -36,75 +34,76 @@ registered, it is embedded like any catalogue dataset.
 
 ## 2. Choose a model
 
-`list_models({ modelType?, status? })` — promoted models by default; pass
-`status: "all"` to see unpromoted candidates too. Pass the returned **`name`** as `model`.
+`listModels()`. It returns two lists:
 
-A bare base-model name is accepted only if it is a known identifier (`scgpt`,
-`gf-12L-40M-i2048`, `tf_sapiens`, `helix-mRNA`, and similar). For a fine-tuned model use
-its registered `<base>_v<n>` name, or give `model` plus `model_version`. An unrecognised
-bare name is rejected with a 400 rather than guessed at, and a promoted model belonging to
-another workspace returns 403.
+- `base_models`: foundation models. Pass the `name` as `model` and omit `model_version`.
+- `models`: the user's own fine-tuned models, promoted or not. Pass the `name` as `model`
+  and the `version`, as a number, as `model_version`. Never pass `base_model`.
 
-## 3. Price it, then confirm, then run
+Any of them can run here; promotion is only a label. Only single-cell models are listed,
+and only those can run here. Every entry carries its rates, `credits_per_job` and
+`credits_per_cell`; a fine-tuned model is priced at its `base_model`'s rates. Pick one whose
+`credits_per_cell` is not `null`; an unpriced model cannot run here.
 
-```
-estimate_embedding_run({ datasetId, model, batch_size, modalities?, model_version? })
-```
-
-Free, starts nothing, safe to call repeatedly. Returns the token count, the price, the
-assumptions behind it, and a `quote_id`. **Show the user the tokens and the price**, and
-get an explicit yes. Then:
+## 3. Queue it, show the price, then approve
 
 ```
-start_embedding_run({ ...the same arguments, quote_id })
+triggerEmbedding({ datasetId, model, model_version? })
 ```
 
-The quote is what fixes the price, and the run tool will not accept a call without one.
-Change any argument and the quote no longer applies — estimate again.
+Send only these fields (and `pretrained_embedding_species`, if the user asks for it). The
+tool refuses any other field with a 400.
 
-- **`batch_size` is required.** The API's own description says it can be omitted; it
-  cannot — omitting it is a 400. 8–32 is a reasonable starting range.
-- **`modalities` must include `"sc"` for TranscriptFormer models** (`tf_sapiens`,
-  `tf_metazoa`, `tf_exemplar`), which fail at run time without it. For other single-cell
-  models it can be omitted.
+The reply carries the platform's quote: the cells it counts and the most it
+will cost. Relay that figure; do not recompute it. Get an explicit yes, then call
+`resolveConfirmation({ id: confirmation_id, decision: "approve" })`. If the user declines,
+resolve it with `"reject"`.
 
-Do not batch several runs behind one confirmation, and do not treat an earlier "sounds
-good" about the plan as approval for the run itself.
+Do not put several runs behind one approval, and do not treat an earlier "sounds good"
+about the plan as approval for the run itself. Each model is its own run with its own
+quote.
 
-Each call starts a separate run: a retry after a timeout may duplicate work, so check
-`list_runs` before re-issuing.
+To change anything, reject the queued confirmation, then queue again. A 409 means the same
+run is already queued. `listPendingConfirmations()` finds it, but its entry carries no
+price, so if you do not still have that quote from this conversation, reject it and queue
+again. For a 402 or an unusable quote, see `check-credits`.
 
 ## 4. Follow it through
 
-`list_runs({ dagIds: ["embedding"], state: ["running"] })` to find the run, then
-`get_run_details({ runId })` until it reaches a terminal state. Runs take minutes to hours;
-poll at a sensible interval and keep the user informed rather than going silent.
+On approval, `outcome.dag_run_id` names the run. Poll `getRunDetails({ runId })` until
+`state` is `succeeded`, `failed` or `cancelled`. Runs take minutes to hours; poll at a
+sensible interval and keep the user informed rather than going silent. On failure,
+`getDagErrors({ runId })` says what went wrong. A failed or cancelled run is refunded in
+full. `listDagRuns({ dagIds: "embedding" })` lists recent embedding runs if you lose track
+of one.
 
-## 5. Report the outputs
+## 5. Download the outputs
 
-`get_run_details({ runId })` returns `artifacts[]` with `artifact_type`, `display_name`
-and `s3_key`.
+`getRunDetails({ runId })` returns `artifacts[]`, each with an `artifact_id`,
+`artifact_type`, `display_name` and `s3_key`. The embedding matrix has `artifact_type`
+`"embedding"`.
 
-- `list_files({ path })` on the run's output directory to see what was produced.
-- `list_s3_files({ path? })` lists an object-storage prefix **non-recursively**, across the
-  caller's projects. Use it when an `s3_key` from `artifacts[]` needs to be located or
-  confirmed to exist; use `list_files` for walking a run's output directory.
-- `read_file({ path, maxBytes? })` reads **UTF-8 text only, up to 1 MiB**. An embedding
-  matrix is a binary `.npy` — it cannot be read through this tool. Report its path and let
-  the user fetch it from the Helical console; do not pretend to have inspected it.
-- For the UMAP, `list_umaps({ datasetId })` then `get_umap({ runId })` returns parsed
-  coordinates and labels. The payload can be very large: summarise it, do not echo it.
+`downloadArtifact({ artifactId })` returns a presigned URL. Fetch it with
+`curl -o '<fileName>' '<url>'`; it needs no auth header and expires within an hour. It
+serves one file of any size, binary included, but not a directory.
+
+If the matrix carries cell ids, join on them. If it is a bare matrix, check its row count
+equals the dataset's `cellCount` before assuming its rows follow the dataset's order, and
+say you assumed it.
 
 ## Hand-off
 
-- Want the model trained on labels first? → `fine-tune-model`, then return here.
+- Want the model trained on labels first? → `fine-tune-model`. Its result can be embedded
+  here as soon as the run succeeds.
 - Want to knock out, knock down or overexpress genes? → `in-silico-perturbation`: edit the
   counts locally, upload, and embed the perturbed file here.
-- Judging whether an embedding is good — separation of the conditions of interest in the
-  UMAP versus a zero-shot baseline — is interpretation, not something these tools report.
+- Cost and balance → `check-credits`.
+- Judging whether an embedding is good (separation of the conditions of interest against a
+  zero-shot baseline) is interpretation, not something these tools report.
 
 ## Conventions
 
 `datasetId`, never a path · scope is derived from the signed-in user, you cannot pass a
-project · estimate → show the price → explicit yes → run with the quote · poll the run · read only under
-`/projects/<project>/data` · never print credentials or raw upstream errors.
+project · send only the schema's fields · queue → relay the quote → explicit yes →
+`resolveConfirmation` · one model, one run, one approval · poll the run · download with
+`downloadArtifact` · never print credentials or raw upstream errors.
