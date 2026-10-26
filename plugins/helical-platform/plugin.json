@@ -23,7 +23,7 @@
     "com.openai": {
       "interface": {
         "displayName": "Helical Platform",
-        "shortDescription": "Single-cell foundation models",
+        "shortDescription": "Bio foundation models",
         "longDescription": "Helical lets you run biological foundation models on your own single-cell data, from the chat you're already in.\n\nUpload an .h5ad dataset into your private Helical project, pick a model — scGPT, Geneformer, TranscriptFormer, Cell2Sentence or Nicheformer — and compute embeddings on Helical's GPUs. Follow the run while it goes, read the error if it fails, and download the embeddings when it finishes.\n\nNothing starts on its own. A run is quoted and queued first, and only begins once you approve it in a second, separate step. Every tool works inside the one project your account owns.\n\nRuns use the credits in your existing Helical account.",
         "developerName": "Helical",
         "category": "Scientific Research",
