@@ -47,9 +47,10 @@ Then connect it:
 
 - **Claude Code** (CLI, and the Code tab in Claude Desktop). If the host offers a helical
   `authenticate` tool (e.g. `mcp__plugin_helical-platform_helical__authenticate`), call it
-  and relay the link it returns; the tools load once the user approves, with no new
-  session. If their browser then lands on a `localhost` page that will not load, ask for
-  the address-bar URL and pass it to the matching `complete_authentication` tool.
+  and relay the link it returns without opening it; the tools load once the user
+  approves, with no new session. If their browser then lands on a `localhost` page that
+  will not load, ask for the address-bar URL and pass it to the matching
+  `complete_authentication` tool.
   Otherwise the user runs `/mcp` → the Helical server → **Authenticate**, or
   `claude mcp login plugin:helical-platform:helical` in their own terminal. Do not run that
   command yourself: it needs an interactive terminal and refuses without one.
@@ -75,9 +76,9 @@ it, and neither does anything in case 1 or 3.
 
 The link reaches you in one of two shapes: the host shows its own prompt to open a URL, or
 the call fails with "Authorization required before this tool can run" followed by the
-link. Relay that link exactly as it came — it belongs to this user and this request. 
-The user opens it and approves (normally one click, since they are already signed in),
-then you retry the same call.
+link. Relay that link exactly as it came — it belongs to this user and this request — and
+do not open it yourself (see "Never open a link" below). The user opens it and approves
+(normally one click, since they are already signed in), then you retry the same call.
 
 ## 3. Connection refused
 
@@ -112,6 +113,17 @@ something clickable, authorizes something the plugin does not use: the user appr
 it seems to work, and the next call fails the same way. Relay only a link the host or a
 Helical tool printed.
 
+## Never open a link
+
+Never open a sign-in or authorization link yourself, including any AWS or Cognito link
+(`amazoncognito.com`, `amazonaws.com`). That means no `open`, `xdg-open` or `start`, no
+browser or web-fetch tool, and no `curl`. The approval is the user's decision: they must
+see the link and choose to open it. Put the link in your message, tell the user to open
+it, and wait for them to say they approved before you retry.
+
+The one exception is `codex mcp login` in case 1. That command opens the browser and
+receives the approval itself; you never handle the link.
+
 ## Then
 
 `health()` and `whoami()` confirm the connection is back: both take no arguments, spend no
@@ -140,6 +152,6 @@ The next step in the first message, always · tell the three cases apart before 
 check status with `claude mcp list` / `codex mcp list` where the client has one · call the
 host's `authenticate` tool when it offers one · run `codex mcp login` yourself, hand
 `claude mcp login` to the user · relay an authorization link exactly as it came, then
-retry · plain words, never the OAuth code · never build a link · retry once, then stop ·
-check for a queued confirmation or a running run before re-issuing anything that spends
-credit.
+retry · plain words, never the OAuth code · never build a link · never open a link
+yourself · retry once, then stop · check for a queued confirmation or a running run
+before re-issuing anything that spends credit.
