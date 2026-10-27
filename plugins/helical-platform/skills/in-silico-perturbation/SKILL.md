@@ -77,12 +77,16 @@ How to edit a gene, on raw counts:
 
 State the edit you chose; it is your decision, not a platform default.
 
-## 3. Price it, then confirm
+## 3. Estimate the price
 
-Price before uploading anything: the cost depends on the combined file's cell count, so
+Estimate before uploading anything: the cost depends on the combined file's cell count, so
 work it out with the rates from `listModels` as `check-credits` describes. Each model is
 **one job** over the whole combined file. Show the user the cell count, the per-model
-estimate and the total, and get their yes before spending.
+estimate and the total.
+
+Do not ask for a yes here. Every run that spends credit needs the user's explicit approval
+of the platform's quote in step 5, and uploading spends no credit. Stop to ask now only when
+the total exceeds the user's balance (read it fresh with `whoami()`, per `check-credits`).
 
 If the total is too much, cut cells or genes; do not split into per-gene runs, which pays
 the per-job amount once per gene.
@@ -102,7 +106,7 @@ dataset, so the derivation is on record.
 
 Follow `compute-embeddings` for each model on the registered dataset: queue the run, show
 the platform's own quote, and approve only after the user says yes. That quote replaces
-your estimate.
+your estimate. Each model needs its own yes, against its own quote.
 
 ## 6. Download and score
 
@@ -143,5 +147,5 @@ edited and how, how many cells, and any assumption about row order.
 
 Edit counts locally, never embeddings · the model sees every condition · one combined file,
 one run per model · always include an expression-matched null · score within cell type
-against the reference centroid · check identity is preserved · estimate → show the price →
-explicit yes → run · hypotheses, not hits · never print credentials or raw upstream errors.
+against the reference centroid · check identity is preserved · estimate → upload → queue →
+quote → explicit yes → run · hypotheses, not hits · never print credentials or raw upstream errors.
