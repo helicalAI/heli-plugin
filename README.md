@@ -44,8 +44,7 @@ Then run `/mcp` to sign in. Claude Code registers the server as
 From GitHub, pinned to the released branch:
 
 ```sh
-codex plugin marketplace add helicalAI/heli-plugin --ref main
-codex plugin add helical-platform@helical-marketplace
+codex plugin add helical-platform@openai-curated-remote
 ```
 
 From a local checkout:
