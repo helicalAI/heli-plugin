@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "helical-platform",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Compute embeddings with Helical foundation models, hosted on Helical's GPUs or locally on your own GPU with the open-source package.",
   "author": {
     "name": "Helical",
@@ -22,7 +22,7 @@
   "extensions": {
     "com.openai": {
       "interface": {
-        "displayName": "Helical Platform",
+        "displayName": "Helical",
         "shortDescription": "Bio foundation models",
         "longDescription": "Helical lets you run biological foundation models on your own single-cell data, from the chat you're already in.\n\nUpload an .h5ad dataset into your private Helical project, pick a model — scGPT, Geneformer, TranscriptFormer, Cell2Sentence or Nicheformer — and compute embeddings on Helical's GPUs. Follow the run while it goes, read the error if it fails, and download the embeddings when it finishes.\n\nNothing starts on its own. A run is quoted and queued first, and only begins once you approve it in a second, separate step. Every tool works inside the one project your account owns.\n\nRuns use the credits in your existing Helical account.",
         "developerName": "Helical",

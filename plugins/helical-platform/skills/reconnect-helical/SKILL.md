@@ -56,7 +56,7 @@ Then connect it:
 - **Codex**: `codex mcp login helical`. You can run this one: it opens their browser and
   waits for the approval. `/mcp` inside Codex only lists servers. In the ChatGPT desktop
   app the same step is **Settings** → **MCP servers** → **Authenticate**.
-- **ChatGPT** from the public directory: **Settings** → **Plugins** → Helical Platform →
+- **ChatGPT** from the public directory: **Settings** → **Plugins** → Helical →
   **Connect**.
 - **Claude Desktop** and **claude.ai**: **Customize** → **Connectors** → Helical →
   **Connect**.
@@ -107,7 +107,7 @@ The client holds that sign-in, so the fix is the client's — clear it and conne
   plugin:helical-platform:helical`, in the user's own terminal, or `/mcp` → the Helical
   server → **Re-authenticate**.
 - **Codex**: `codex mcp logout helical && codex mcp login helical`.
-- **ChatGPT**: **Settings** → **Plugins** → Helical Platform → **Reconnect** (or
+- **ChatGPT**: **Settings** → **Plugins** → Helical → **Reconnect** (or
   **Disconnect**, then **Connect**).
 - **Claude Desktop** and **claude.ai**: **Customize** → **Connectors** → Helical →
   **Connect**.
