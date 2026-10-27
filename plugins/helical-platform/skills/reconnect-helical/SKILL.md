@@ -75,9 +75,22 @@ it, and neither does anything in case 1 or 3.
 
 The link reaches you in one of two shapes: the host shows its own prompt to open a URL, or
 the call fails with "Authorization required before this tool can run" followed by the
-link. Relay that link exactly as it came — it belongs to this user and this request. 
-The user opens it and approves (normally one click, since they are already signed in),
-then you retry the same call.
+link. Relay that link exactly as it came — it belongs to this user and this request —
+alone in a fenced code block, never as a markdown link or a bare URL:
+
+```text
+https://bedrock-agentcore.us-east-1.amazonaws.com/identities/oauth2/authorize?request_uri=…
+```
+
+The link works once, for about ten minutes: whatever opens it first spends it, and the
+user then gets `{"message":"Invalid request"}`. Some hosts open a link they render before
+the user clicks it — the ChatGPT app does — so a rendered link arrives already spent; a
+code block is not rendered as a link and reaches the user unused. For the same reason,
+never open, fetch or preview it yourself. Ask the user to copy it into their browser and
+approve (normally one click, since they are already signed in), then retry the same call.
+If they get "Invalid request", the link was already spent or is too old: retry the call
+once for a fresh link and relay that one the same way, rather than sending them back to
+the old one.
 
 ## 3. Connection refused
 
@@ -139,7 +152,7 @@ saying it.
 The next step in the first message, always · tell the three cases apart before fixing ·
 check status with `claude mcp list` / `codex mcp list` where the client has one · call the
 host's `authenticate` tool when it offers one · run `codex mcp login` yourself, hand
-`claude mcp login` to the user · relay an authorization link exactly as it came, then
-retry · plain words, never the OAuth code · never build a link · retry once, then stop ·
+`claude mcp login` to the user · relay an authorization link exactly as it came, alone in
+a code block and never opened by you, then retry · plain words, never the OAuth code · never build a link · retry once, then stop ·
 check for a queued confirmation or a running run before re-issuing anything that spends
 credit.
