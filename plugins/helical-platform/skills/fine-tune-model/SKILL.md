@@ -18,7 +18,13 @@ model list.
 most expensive run on this surface, so the preparation below matters more than it does for
 embeddings.
 
-## 1. Select the dataset and confirm the label column
+**Every run that spends credit needs the user's explicit approval.** That approval comes at
+`resolveConfirmation`, after the platform's quote. So do not ask the user to approve the
+configuration before queuing. Make the choices below, queue the run, then ask once, showing
+the choices and the price together. Queuing is free. To change a choice, reject the queued
+run and queue again.
+
+## 1. Select the dataset and choose the label column
 
 `listDatasets(...)` → `getDataset({ id })`. The record names likely label columns:
 `celltypeColumn`, `celltypeColumnLv2`, `diseaseColumn`, `donorColumn`. Note `cellCount`
@@ -29,10 +35,12 @@ a column the record does not name, ask them for its exact name, or read it from 
 copy of the file (the record's `linkData`, when it has one; an uploaded dataset usually
 does not).
 
-**Confirm the label column with the user before queuing.** Training on a plausible-looking
-but wrong column wastes the whole run, and nothing downstream will catch it. Where you can
-see the classes, check they look like what the user expects. A column with one dominant
-class or hundreds of singletons will not train usefully.
+**Choose the label column, and name it in the approval request.** Training on a
+plausible-looking but wrong column wastes the whole run, and nothing downstream will catch
+it. Where you can see the classes, check they look like what the user expects. A column
+with one dominant class or hundreds of singletons will not train usefully. Ask before
+queuing only when you cannot choose: several columns fit the request, none does, or the
+classes look unusable.
 
 **Validation needs its own dataset.** This surface does not split the training data. To
 validate, the user registers a separate held-out dataset and you pass it as `valDatasetId`.
@@ -91,8 +99,8 @@ one configuration).
 
 Reasonable starting values when the user has no preference: `learning_rate` 1e-4,
 `batch_size` 16, `epochs` 1, `logging_steps` 10, `lr_scheduler` `"constant"`, `min_lr`
-1e-6, `seed` 42, `num_trainable_layers` 2. State the values you chose. They are your
-decisions, not platform defaults, and the user may want different ones.
+1e-6, `seed` 42, `num_trainable_layers` 2. Queue with them; do not stop to ask first. They
+are your decisions, not platform defaults, so list them in the approval request.
 
 Start with a single epoch. It is cheaper to run again than to find out after a long run
 that the configuration was wrong.
@@ -107,9 +115,11 @@ will cost. Relay that figure; do not recompute it. It is usually many times an e
 of the same dataset, because each epoch makes several passes over the training cells, and
 validation adds a pass over the validation cells each epoch.
 
-**Get the user's explicit yes**, restating the dataset, the label column, the base model,
-the epoch count and the quoted price. An approval for an embedding run is not an approval
-for this one. Then call `resolveConfirmation({ id: confirmation_id, decision: "approve" })`.
+**Ask for the user's explicit yes in one message.** Name the dataset, the label column, the
+base model, the values you chose and the quoted price. Say the run is queued and waits for
+their yes, and that any value can be changed before it starts, with a new quote. An
+approval for an embedding run is not an approval for this one, and an earlier "sounds good"
+about the plan is not approval for the run. Then call `resolveConfirmation({ id: confirmation_id, decision: "approve" })`.
 If they decline, resolve it with `"reject"`.
 
 To change anything, reject the queued confirmation, then queue again with
@@ -147,8 +157,9 @@ claiming a quality verdict the tools cannot support.
 
 ## Conventions
 
-`datasetId`, never a path · scope is derived from the signed-in user · verify the label
+`datasetId`, never a path · scope is derived from the signed-in user · check the label
 column before queuing · validate with a separate dataset, never a split · send only the
-schema's fields · queue → relay the quote → explicit yes → `resolveConfirmation` · poll the
+schema's fields · no approval before queuing · queue → choices and quote in one message →
+explicit yes → `resolveConfirmation` · poll the
 run · a new fine-tune can run here at once, promoted or not · never print credentials or
 raw upstream errors.

@@ -17,6 +17,10 @@ run starts only when `resolveConfirmation` approves it, and **that call is the u
 approval**. State the dataset, the model and the price, and get an explicit yes before
 making it.
 
+Every run that spends credit needs that explicit approval. So do not ask the user to approve
+the dataset or model before queuing. Choose them, queue the run, then ask once, showing the
+choices and the price together. Queuing is free. To change a choice, reject and queue again.
+
 You also cannot choose a project: scope comes from the signed-in user, and no tool accepts
 a project or conversation identifier.
 
