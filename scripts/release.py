@@ -108,7 +108,11 @@ def build_zip(repo: Path, plugin: Plugin, dist: Path, ref: str = "HEAD") -> Path
     virtual = []
     mcp_json = openai_mcp_json(repo, plugin, ref)
     if mcp_json is not None:
-        # --prefix does not apply to a virtual file, so its path names the root itself.
+        # OpenAI needs $schema in mcp.json and the Anthropic Directory refuses it in the
+        # repo (see MCP_SCHEMA). So the committed mcp.json is excluded, and a virtual
+        # file takes its place: git writes it into the zip from the given text, with
+        # no copy on disk or in git. --prefix does not apply to it, so its path
+        # includes the plugin root.
         pathspecs.append(":!mcp.json")
         virtual.append(f"--add-virtual-file={plugin.name}/mcp.json:{mcp_json}")
     git(
