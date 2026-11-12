@@ -93,7 +93,7 @@ Two optional fields carry conditions the server does not check either.
 queuing.
 
 **Send only fields the schema lists.** It refuses an unknown field with a 400. Three
-common ones are not offered here: `val_split` (pass `valDatasetId` instead),
+common ones are not offered here: `val_split` (use `valDatasetId` instead),
 `val_steps` (validation runs once an epoch) and `hyperparameter_config` (one run trains
 one configuration).
 

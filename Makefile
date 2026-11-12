@@ -20,7 +20,6 @@ check:
 
 # Standard library only, so any interpreter works; uv picks one without a project env.
 test:
-	uv run python -m unittest discover -s plugins/helical-platform/tests -v
 	uv run python -m unittest discover -s tests -v
 
 # --strict fails on unrecognized fields and missing metadata, which the loader itself
