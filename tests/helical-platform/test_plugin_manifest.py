@@ -18,8 +18,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-PLUGIN = Path(__file__).parents[1]
-REPO = PLUGIN.parents[1]
+REPO = Path(__file__).resolve().parents[2]
+PLUGIN = REPO / "plugins" / "helical-platform"
 MANIFEST_PATH = PLUGIN / "plugin.json"
 CLAUDE_MANIFEST_PATH = PLUGIN / ".claude-plugin" / "plugin.json"
 CLAUDE_MARKETPLACE_PATH = REPO / ".claude-plugin" / "marketplace.json"
