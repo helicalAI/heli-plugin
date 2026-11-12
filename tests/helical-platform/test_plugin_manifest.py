@@ -175,6 +175,12 @@ class ClientParityTests(unittest.TestCase):
         self.assertNotIn("skills", CLAUDE_MANIFEST)
         self.assertFalse((PLUGIN / ".mcp.json").exists(), "a second MCP config would drift")
 
+    def test_the_shared_mcp_config_names_no_schema(self):
+        """The Anthropic Directory scans this file and refuses fields Claude Code does
+        not read, `$schema` included, from organizations it has not verified. OpenAI
+        needs `$schema`, so scripts/release.py adds it to the OpenAI zip only."""
+        self.assertNotIn("$schema", MCP_JSON)
+
     def test_the_auth_skill_names_the_server_as_claude_code_registers_it(self):
         """A plugin-provided server is registered as `plugin:<plugin>:<server>`, and
         `claude mcp login <server>` answers "No MCP server named ..." for it. Renaming

@@ -175,6 +175,31 @@ class PackageTests(GitRepoTestCase):
         [on_main] = release.package(self.repo, self.dist)
         self.assertEqual(on_main.read_bytes(), uploaded)
 
+    def test_the_zip_mcp_json_names_its_schema_but_the_repo_one_does_not(self):
+        """OpenAI finds no MCP server in an mcp.json without `$schema`; the Anthropic
+        Directory refuses the field in the repo. So only the zip carries it."""
+        (self.repo / "plugins/demo/mcp.json").write_text(
+            json.dumps({"mcpServers": {"x": {"type": "http", "url": "https://x"}}})
+        )
+        commit(self.repo)
+        [path] = release.package(self.repo, self.dist)
+        with zipfile.ZipFile(path) as zf:
+            packaged = json.loads(zf.read("demo/mcp.json"))
+            years = {info.date_time[0] for info in zf.infolist()}
+            attrs = {zf.getinfo(n).external_attr for n in ("demo/mcp.json", "demo/plugin.json")}
+        self.assertEqual(packaged["$schema"], release.MCP_SCHEMA)
+        self.assertEqual(packaged["mcpServers"], {"x": {"type": "http", "url": "https://x"}})
+        self.assertEqual(years, {2001}, "the generated mcp.json must carry the commit time")
+        self.assertEqual(len(attrs), 1, "the generated mcp.json must get the same mode as the rest")
+        self.assertNotIn("$schema", json.loads((self.repo / "plugins/demo/mcp.json").read_text()))
+
+    def test_a_schema_already_in_mcp_json_is_kept(self):
+        (self.repo / "plugins/demo/mcp.json").write_text(json.dumps({"$schema": "custom"}))
+        commit(self.repo)
+        [path] = release.package(self.repo, self.dist)
+        with zipfile.ZipFile(path) as zf:
+            self.assertEqual(json.loads(zf.read("demo/mcp.json"))["$schema"], "custom")
+
     def test_writes_only_the_zips(self):
         """GitHub computes and shows a SHA-256 for every release asset, so no checksum
         file is published alongside the zips."""
@@ -261,6 +286,10 @@ class CheckZipTests(GitRepoTestCase):
                                "demo/skills/empty/README.md": "x"})
         self.assertTrue(any("demo/skills/notes.md" in p for p in problems), problems)
         self.assertTrue(any("demo/skills/empty" in p for p in problems), problems)
+
+    def test_rejects_an_mcp_json_without_its_schema(self):
+        problems = self.check({**VALID_ENTRIES, "demo/mcp.json": "{}"})
+        self.assertTrue(any("mcp.json" in p and "$schema" in p for p in problems), problems)
 
     def test_rejects_symlinks(self):
         problems = self.check(VALID_ENTRIES, symlinks=("demo/skills/hello/link",))
