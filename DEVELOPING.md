@@ -65,6 +65,10 @@ make release-plan     # which plugins a merge to main would release (fetches tag
 - Each zip holds one top-level `<name>/` directory: everything tracked under
   `plugins/<name>/` except `tests/`. The exclusion list is `EXCLUDED` in
   `scripts/release.py`.
+- The zip's `mcp.json` gains `"$schema"` (`MCP_SCHEMA` in `scripts/release.py`); the
+  committed one must not have it. OpenAI finds no MCP server in an `mcp.json` without
+  it and refuses the plugin's `test_cases`. The Anthropic Directory scans the repo and
+  refuses the field from organizations it has not verified.
 - `make package` fails on what OpenAI would reject: files beside the plugin directory,
   a missing `plugin.json` or referenced asset, a file under `skills/` that is not a
   skill directory with a `SKILL.md`, symlinks, more than 5,000 entries or more than

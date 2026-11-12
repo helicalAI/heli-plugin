@@ -24,6 +24,12 @@ EXCLUDED = ("tests",)
 MAX_ZIP_BYTES = 100 * 1024 * 1024
 MAX_ZIP_ENTRIES = 5000
 
+# OpenAI reads mcp.json as an agent-plugins file only when it names this schema;
+# without it, it finds no server and refuses plugin-level test_cases. The Anthropic
+# Directory refuses the same field from organizations it has not verified, so the
+# repo's mcp.json leaves it out and build_zip adds it to the OpenAI zip only.
+MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+
 # The version becomes part of a git tag, so it has to be a plain semantic version.
 SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
@@ -98,11 +104,31 @@ def build_zip(repo: Path, plugin: Plugin, dist: Path, ref: str = "HEAD") -> Path
     same bytes."""
     out = dist / plugin.zip_name
     committed = git(repo, "log", "-1", "--format=%cI", ref, "--", plugin.path).strip()
+    pathspecs = [f":!{excluded}" for excluded in EXCLUDED]
+    virtual = []
+    mcp_json = openai_mcp_json(repo, plugin, ref)
+    if mcp_json is not None:
+        # --prefix does not apply to a virtual file, so its path names the root itself.
+        pathspecs.append(":!mcp.json")
+        virtual.append(f"--add-virtual-file={plugin.name}/mcp.json:{mcp_json}")
     git(
         repo, "archive", "--format=zip", f"--prefix={plugin.name}/", f"--mtime={committed}",
-        "-o", str(out), f"{ref}:{plugin.path}", *(f":!{excluded}" for excluded in EXCLUDED),
+        *virtual, "-o", str(out), f"{ref}:{plugin.path}", *pathspecs,
     )
     return out
+
+
+def openai_mcp_json(repo: Path, plugin: Plugin, ref: str = "HEAD") -> str | None:
+    """The plugin's committed mcp.json with MCP_SCHEMA added, for the zip to carry in
+    place of the committed file. None when there is no mcp.json or it already names a
+    schema: then the committed file is packaged as it is."""
+    try:
+        config = json.loads(git(repo, "show", f"{ref}:{plugin.path}/mcp.json"))
+    except GitError:
+        return None
+    if "$schema" in config:
+        return None
+    return json.dumps({"$schema": MCP_SCHEMA, **config}, indent=2) + "\n"
 
 
 def asset_refs(value: object) -> set[str]:
@@ -138,6 +164,8 @@ def check_zip(path: Path, name: str) -> list[str]:
             for ref in sorted(asset_refs(manifest)):
                 if root + ref.removeprefix("./") not in names:
                     problems.append(f"plugin.json references {ref}, which is not in the zip")
+        if f"{root}mcp.json" in names and "$schema" not in json.loads(zf.read(f"{root}mcp.json")):
+            problems.append(f"{root}mcp.json has no $schema, so OpenAI finds no MCP server in it")
         for excluded in EXCLUDED:
             if any(n.startswith(f"{root}{excluded}/") for n in names):
                 problems.append(f"{root}{excluded}/ should not be packaged")
