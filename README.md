@@ -78,18 +78,18 @@ Your account, credits and usage history live at [console.helical.bio](https://co
 .claude-plugin/marketplace.json   # Claude Code marketplace
 scripts/release.py                # release zips and the version gate (see DEVELOPING.md)
 tests/test_release.py             # its tests
+tests/<plugin>/                   # per-plugin tests, kept outside the plugin (the directory refuses .py files in it); needs an __init__.py or discovery skips it
 plugins/helical-platform/
 ├── plugin.json                 # OpenAI / Codex manifest (Agent Plugins format; listing under extensions.com.openai)
 ├── .claude-plugin/plugin.json  # Claude Code plugin manifest (same metadata; tests keep them in sync)
 ├── mcp.json                    # the remote MCP endpoint the plugin connects to (shared)
 ├── assets/icon.png             # listing icon for both directories
-├── skills/
-│   ├── check-credits/
-│   ├── compute-embeddings/
-│   ├── fine-tune-model/
-│   ├── in-silico-perturbation/
-│   └── reconnect-helical/
-└── tests/                      # test_plugin_manifest.py
+└── skills/
+    ├── check-credits/
+    ├── compute-embeddings/
+    ├── fine-tune-model/
+    ├── in-silico-perturbation/
+    └── reconnect-helical/
 ```
 
 ## Validate
